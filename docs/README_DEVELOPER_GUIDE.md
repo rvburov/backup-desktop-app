@@ -109,8 +109,11 @@ backup-desktop-app/
 │   ├── backend/                   # Тесты бэкенда, без Qt
 │   ├── frontend/                  # Тесты интерфейса поверх настоящего бэкенда
 │   └── test_architecture.py       # Проверка границ между слоями
-├── .github/workflows/tests.yml    # CI: pyflakes + pytest на Windows и Linux
-├── BackupApp.spec                 # Сборка одним файлом без консоли
+├── .github/workflows/
+│   ├── tests.yml                  # CI: pyflakes + pytest на Windows, Linux и macOS
+│   └── release.yml                # Релиз по тегу vX.Y.Z: сборка для трех систем и публикация
+├── scripts/github-release/        # Выпуск релиза: release.sh, проверка версии, история релизов
+├── BackupApp.spec                 # Сборка без консоли: один файл, на macOS BackupApp.app
 ├── requirements.txt               # Все зависимости
 ├── settings_ example.ini          # Пример файла настроек с описанием ключей
 ├── icon.ico / icon.png / icon.icns, icons/  # в icon.ico размеры от 16 до 256 точек
@@ -282,18 +285,29 @@ pip install -r requirements.txt
 pyinstaller BackupApp.spec
 ```
 
-Результат: один файл `dist/BackupApp.exe` (Windows) или `dist/BackupApp` (Linux/macOS), без окна
-консоли. В сборку включаются `icon.ico` и папка `icons/`; модуль `PyQt5.QtNetwork` указан в
-`hiddenimports`, он нужен для защиты от второго экземпляра. Файл `settings.ini` при первом
-запуске приложение создает само.
+PyInstaller собирает программу только для той системы и архитектуры, на которой запущен.
+Результат:
 
-Особенности платформ:
+- **Windows**: один файл `dist/BackupApp.exe` без окна консоли, иконка `icon.ico`. Номер версии
+  виден в свойствах файла (вкладка «Подробно»). Собранный exe автозапуск регистрирует как
+  `"...\BackupApp.exe" --minimized`.
+- **Linux**: один файл `dist/BackupApp`. Для трея нужна панель с поддержкой
+  StatusNotifier/XEmbed; без нее приложение предупредит в журнале и будет завершаться при
+  закрытии окна.
+- **macOS**: приложение `dist/BackupApp.app` с иконкой `icon.icns` и версией в `Info.plist`.
+  Программа для macOS всегда папка-бандл, поэтому здесь сборка папкой внутри бандла, а не
+  одним файлом.
 
-- **Windows**: `console=False`, иконка `icon.ico`; собранный exe автозапуск регистрирует
-  как `"...\BackupApp.exe" --minimized`.
-- **Linux**: для трея нужна панель с поддержкой StatusNotifier/XEmbed; без нее приложение
-  предупредит в журнале и будет завершаться при закрытии окна.
-- **macOS**: иконка `icon.icns`; для .app-бандла добавьте в spec `BUNDLE(...)`.
+В сборку включаются `icon.ico` и папка `icons/`; модуль `PyQt5.QtNetwork` указан в
+`hiddenimports`, он нужен для защиты от второго экземпляра. Номер версии spec берет из
+`VERSION` в `backup_app/backend/constants.py`. Файл `settings.ini` при первом запуске
+приложение создает само.
+
+### Выпуск релиза
+
+Готовые программы для всех трех систем собирает GitHub по команде
+`scripts/github-release/release.sh 9.0.1`. Как выпустить версию, что проверяется до выпуска и
+что делать, если что-то пошло не так, описано в [README_RELEASE.md](README_RELEASE.md).
 
 ## Тестирование
 
@@ -353,8 +367,12 @@ def test_tick_runs_backup_when_due(make_service, paths):
 
 ### CI
 
-`.github/workflows/tests.yml` запускает pyflakes и pytest на `windows-latest` и `ubuntu-latest`
-(Python 3.11 и 3.12). На Linux перед запуском ставятся системные библиотеки Qt.
+- `.github/workflows/tests.yml` при каждом push в ветку и в pull request запускает pyflakes и
+  pytest на `windows-latest`, `ubuntu-latest` и `macos-latest` (Python 3.11 и 3.12) и тесты
+  скриптов выпуска на тех же трех системах. На Linux перед запуском ставятся системные
+  библиотеки Qt.
+- `.github/workflows/release.yml` запускается тегом `vX.Y.Z`: собирает программу для
+  Windows, macOS и Linux и публикует релиз, см. [README_RELEASE.md](README_RELEASE.md).
 
 ## Вклад в проект
 

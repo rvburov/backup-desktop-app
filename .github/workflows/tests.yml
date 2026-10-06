@@ -1,7 +1,10 @@
 name: Tests
 
+# Push в любую ветку и pull request. Push тега сюда не попадает: тег запускает release.yml,
+# и там тесты идут на каждой системе перед сборкой.
 on:
   push:
+    branches: ['**']
   pull_request:
 
 jobs:
@@ -10,14 +13,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        os: [windows-latest, ubuntu-latest, macos-latest]
         python-version: ["3.11", "3.12"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -40,3 +43,19 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           PYTHONUTF8: "1"
         run: python -m pytest
+
+  # Скрипты выпуска (scripts/github-release) на трех системах: release.sh запускают
+  # на любой из них, а sed, awk и bash там разные.
+  release-scripts:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Release scripts tests
+        shell: bash
+        run: bash scripts/github-release/release-test.sh

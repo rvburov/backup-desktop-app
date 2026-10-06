@@ -1,6 +1,8 @@
 # Для текстовых файлов
 *.py text eol=lf
 *.js text eol=lf
+# Скрипты bash: с окончаниями CRLF bash их не выполнит ни на одной системе
+*.sh text eol=lf
 
 # Для бинарных файлов
 *.jpg binary

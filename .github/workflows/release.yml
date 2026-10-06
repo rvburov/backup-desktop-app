@@ -1,0 +1,377 @@
+# Сборка и публикация релиза BackupApp.
+#
+# Запускается только пушем тега вида v9.0.1 или вручную с вкладки Actions. Обычный push в ветку
+# релиз не запускает: триггеров на ветки и пул-реквесты здесь нет намеренно.
+#
+# Локальная половина процесса — scripts/github-release/release.sh (меняет версию, ставит тег,
+# отправляет). Подробно: docs/README_RELEASE.md.
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Существующий тег, например v9.0.1: пересборка без сдвига тега'
+        required: true
+      draft:
+        description: 'Создать черновик вместо публикации (черновик виден только вам)'
+        type: boolean
+        default: false
+
+# Права по умолчанию — только чтение. Запись включается ровно в одном job — publish.
+permissions:
+  contents: read
+
+# Два прогона одного тега не идут параллельно, но и не отменяют друг друга: прерванная
+# на середине публикация хуже ожидания.
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+# bash на всех системах. Явный shell включает pipefail: упавшая команда внутри конвейера
+# роняет шаг, а не теряется за последней командой.
+defaults:
+  run:
+    shell: bash
+
+env:
+  PYTHON_VERSION: '3.12'
+  PYTHONUTF8: '1'
+  PIP_DISABLE_PIP_VERSION_CHECK: '1'
+
+jobs:
+  # ── Проверки: дешевые, до сборки на четырех машинах ─────────────────────────
+  gate:
+    name: Проверки
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.ver.outputs.tag }}
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0          # нужна история, чтобы проверить «тег стоит на коммите из master»
+
+      # Тег приходит либо из события push, либо из поля ручного запуска. Второе — свободный
+      # текст, поэтому он идет через env, а не подставляется в тело скрипта, и сразу
+      # проверяется по формату.
+      - name: Разобрать тег
+        id: ver
+        env:
+          RAW_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if ! printf '%s' "$RAW_TAG" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' > /dev/null; then
+            echo "::error::Тег «${RAW_TAG}» не в формате vX.Y.Z"
+            exit 1
+          fi
+          echo "tag=$RAW_TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${RAW_TAG#v}" >> "$GITHUB_OUTPUT"
+
+      # Единственное место, где сверяется «тег == код»: release.sh этого сделать не может,
+      # он тег и создает. Расхождение — отказ: иначе релиз не соответствовал бы коммиту под тегом.
+      - name: Версия в коде совпадает с тегом
+        env:
+          VER: ${{ steps.ver.outputs.version }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          bash scripts/github-release/check-version.sh "$VER" || {
+            echo "::error::Тег $TAG не совпадает с версией в коде. Удалите тег и выпустите версию заново:"
+            echo "::error::git push --delete origin $TAG && git tag -d $TAG && scripts/github-release/release.sh $VER"
+            exit 1
+          }
+
+      - name: Тег стоит на коммите из master
+        run: |
+          git fetch --quiet origin +refs/heads/master:refs/remotes/origin/master
+          git merge-base --is-ancestor HEAD origin/master \
+            || { echo "::error::Тег стоит на коммите, которого нет в master"; exit 1; }
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Статическая проверка
+        run: |
+          python -m pip install --quiet pyflakes
+          python -m pyflakes backup_app tests backup-app.py
+
+  # ── Сборка: четыре машины параллельно ───────────────────────────────────────
+  build:
+    name: Сборка ${{ matrix.name }}
+    needs: gate
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      # Без fail-fast: упавшая система не отменяет остальные, иначе за прогон видно только
+      # первую поломку.
+      fail-fast: false
+      matrix:
+        include:
+          - { target: windows-x64, os: windows-latest, name: Windows }
+          # Ubuntu 22.04, а не ubuntu-latest: программа запускается на системах не старше той,
+          # на которой собрана (glibc 2.35). Когда GitHub уберет 22.04, перейти на ubuntu-24.04.
+          - { target: linux-x64,   os: ubuntu-22.04,   name: Linux }
+          - { target: macos-arm64, os: macos-latest,   name: macOS Apple Silicon }
+          # PyInstaller собирает только под архитектуру своей машины, поэтому для Intel нужна
+          # Intel-машина. GitHub обещает держать их до августа 2027.
+          - { target: macos-x64,   os: macos-15-intel, name: macOS Intel }
+    env:
+      VER: ${{ needs.gate.outputs.version }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # Библиотеки нужны и тестам, и сборке: PyInstaller кладет в программу то, что находит
+      # на машине сборки, и пользователю их ставить не придется. Xvfb — виртуальный экран
+      # для проверки запуска.
+      - name: Системные библиотеки Qt (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libfontconfig1 libdbus-1-3 libglib2.0-0 libxkbcommon-x11-0 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
+            libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 libxcb-xfixes0 xvfb
+
+      - name: Зависимости
+        run: python -m pip install -r requirements.txt
+
+      # Тесты на каждой системе перед сборкой: на macOS программа больше нигде так не
+      # проверяется перед выпуском.
+      - name: Тесты
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest
+
+      - name: Сборка
+        run: python -m PyInstaller --noconfirm --clean BackupApp.spec
+
+      # ── Проверка собранного ───────────────────────────────────────────────
+      - name: Проверка сборки — Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $exe = Get-Item -LiteralPath dist/BackupApp.exe
+          if ($exe.Length -lt 20MB) { throw "Слишком маленький exe: $($exe.Length) байт" }
+          $pv = $exe.VersionInfo.ProductVersion
+          if ($pv -ne $env:VER) { throw "ProductVersion = $pv, ожидалось $env:VER" }
+          Write-Host "BackupApp.exe $pv, $([math]::Round($exe.Length / 1MB)) МБ"
+
+      - name: Проверка сборки — macOS
+        if: runner.os == 'macOS'
+        run: |
+          APP=dist/BackupApp.app
+          [ -x "$APP/Contents/MacOS/BackupApp" ] || { echo "::error::нет $APP/Contents/MacOS/BackupApp"; exit 1; }
+          V="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+          [ "$V" = "$VER" ] || { echo "::error::Info.plist: $V, ожидалось $VER"; exit 1; }
+          # Машина могла собрать не ту архитектуру: сверяем ее у самой программы.
+          ARCH="$(lipo -archs "$APP/Contents/MacOS/BackupApp")"
+          case "$TARGET" in
+            macos-arm64) [ "$ARCH" = "arm64" ]  || { echo "::error::$TARGET собран как $ARCH"; exit 1; } ;;
+            macos-x64)   [ "$ARCH" = "x86_64" ] || { echo "::error::$TARGET собран как $ARCH"; exit 1; } ;;
+          esac
+          # Ad-hoc подпись ставит PyInstaller. Без подписи Apple Silicon не запустит программу,
+          # а с ней macOS пишет «не удалось проверить», и запуск разрешается в настройках.
+          codesign --verify --deep --strict "$APP"
+          echo "BackupApp.app $V, $ARCH, $(du -sh "$APP" | cut -f1)"
+
+      - name: Проверка сборки — Linux
+        if: runner.os == 'Linux'
+        run: |
+          BIN=dist/BackupApp
+          [ -x "$BIN" ] || { echo "::error::нет исполняемого $BIN"; exit 1; }
+          file "$BIN" | grep ELF > /dev/null || { echo "::error::$BIN не ELF"; exit 1; }
+          SIZE="$(stat -c%s "$BIN")"
+          [ "$SIZE" -gt 20000000 ] || { echo "::error::слишком маленький файл: $SIZE байт"; exit 1; }
+          echo "BackupApp $(( SIZE / 1048576 )) МБ"
+
+      # Программа должна запуститься и проработать несколько секунд. Это ловит то, чего не видно
+      # по тестам: модуль или библиотеку, которую PyInstaller не положил в сборку. Признак
+      # запуска — строка с путем к settings.ini в журнале программы. Своя папка настроек и свой
+      # ключ экземпляра: проверка не зависит от машины.
+      - name: Проверка запуска — Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $config = Join-Path $env:RUNNER_TEMP "backupapp-check"
+          $env:BACKUPAPP_CONFIG_DIR = $config
+          $env:BACKUPAPP_INSTANCE_KEY = "release-check"
+          $log = Join-Path $config "logs/backup-app.log"
+          $p = Start-Process -FilePath (Resolve-Path dist/BackupApp.exe) -ArgumentList "--minimized" -PassThru
+          $started = $false
+          for ($i = 0; $i -lt 60 -and -not $p.HasExited; $i++) {
+            Start-Sleep -Seconds 1
+            if ((Test-Path -LiteralPath $log) -and (Select-String -LiteralPath $log -Pattern "settings.ini" -SimpleMatch -Quiet)) {
+              $started = $true
+              break
+            }
+          }
+          if ($started) { Start-Sleep -Seconds 5 }
+          $alive = -not $p.HasExited
+          # Собранный exe — это загрузчик и сама программа в дочернем процессе: завершаются оба.
+          Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.Id)" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+          if ($alive) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+          Write-Host "--- журнал программы"
+          if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Encoding utf8 } else { Write-Host "(журнала нет)" }
+          if (-not ($started -and $alive)) { throw "Программа не запустилась или завершилась сама" }
+          Write-Host "Программа запустилась и работает"
+
+      - name: Проверка запуска — macOS и Linux
+        if: runner.os != 'Windows'
+        run: |
+          export BACKUPAPP_CONFIG_DIR="$RUNNER_TEMP/backupapp-check"
+          export BACKUPAPP_INSTANCE_KEY="release-check"
+          LOG="$BACKUPAPP_CONFIG_DIR/logs/backup-app.log"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            # Настоящий экран X11 в памяти: проверяется тот же модуль xcb, что у пользователя.
+            Xvfb :99 -screen 0 1280x800x24 > /dev/null 2>&1 &
+            export DISPLAY=:99
+            sleep 2
+            BIN=dist/BackupApp
+          else
+            BIN=dist/BackupApp.app/Contents/MacOS/BackupApp
+          fi
+          "$BIN" --minimized > "$RUNNER_TEMP/backupapp-output.txt" 2>&1 &
+          PID=$!
+          started=0
+          for _ in $(seq 60); do
+            sleep 1
+            kill -0 "$PID" 2>/dev/null || break
+            if [ -f "$LOG" ] && grep -qF settings.ini "$LOG"; then started=1; break; fi
+          done
+          [ $started -eq 1 ] && sleep 5
+          alive=0
+          kill -0 "$PID" 2>/dev/null && alive=1
+          [ $alive -eq 1 ] && kill "$PID"
+          echo "--- журнал программы"; cat "$LOG" 2>/dev/null || echo "(журнала нет)"
+          echo "--- вывод программы"; cat "$RUNNER_TEMP/backupapp-output.txt"
+          if [ $started -ne 1 ] || [ $alive -ne 1 ]; then
+            echo "::error::Программа не запустилась или завершилась сама"
+            exit 1
+          fi
+          echo "Программа запустилась и работает"
+
+      # ── Упаковка: один файл на систему, версия в имени ───────────────────────
+      # Windows: exe без архива, скачал и запустил.
+      - name: Упаковка — Windows
+        if: runner.os == 'Windows'
+        run: |
+          mkdir -p pkg
+          cp dist/BackupApp.exe "pkg/BackupApp-$VER-windows-x64.exe"
+
+      # macOS: образ .dmg, в окне образа программа и ярлык папки «Программы»: установка —
+      # перетащить одно на другое. ditto, а не cp: он сохраняет в бандле ссылки и атрибуты,
+      # без них ломается подпись.
+      - name: Упаковка — macOS
+        if: runner.os == 'macOS'
+        run: |
+          DMG="pkg/BackupApp-$VER-$TARGET.dmg"
+          mkdir -p pkg stage
+          ditto dist/BackupApp.app stage/BackupApp.app
+          ln -s /Applications stage/Applications
+          # hdiutil на машинах GitHub иногда отвечает «Resource busy»: несколько попыток.
+          for attempt in 1 2 3; do
+            hdiutil create -quiet -volname BackupApp -srcfolder stage -fs HFS+ -format UDZO \
+              -imagekey zlib-level=9 -ov "$DMG" && break
+            [ "$attempt" = "3" ] && { echo "::error::hdiutil не создал образ"; exit 1; }
+            sleep 10
+          done
+          # Контрольное монтирование: программа на месте, бит запуска и подпись целы.
+          hdiutil attach -quiet -nobrowse -readonly -mountpoint /Volumes/backupapp-check "$DMG"
+          ok=1
+          [ -x /Volumes/backupapp-check/BackupApp.app/Contents/MacOS/BackupApp ] \
+            || { echo "::error::в образе потерян бит запуска"; ok=0; }
+          codesign --verify --deep --strict /Volumes/backupapp-check/BackupApp.app \
+            || { echo "::error::подпись не пережила упаковку"; ok=0; }
+          hdiutil detach -quiet /Volumes/backupapp-check
+          [ $ok -eq 1 ]
+
+      # Linux: tar, а не zip: zip теряет бит запуска, и распакованная программа не запустится.
+      # В архиве ровно один файл, без папки.
+      - name: Упаковка — Linux
+        if: runner.os == 'Linux'
+        run: |
+          TGZ="pkg/BackupApp-$VER-linux-x64.tar.gz"
+          mkdir -p pkg
+          tar -czf "$TGZ" -C dist BackupApp
+          # awk, а не grep с ключом -q: тот закрыл бы канал на первом совпадении, tar получил бы
+          # SIGPIPE, и pipefail уронил бы шаг именно тогда, когда совпадение нашлось.
+          tar -tvzf "$TGZ" | awk '$1 ~ /^-rwx/ && $NF == "BackupApp" { f = 1 } END { exit !f }' \
+            || { echo "::error::в архиве потерян бит запуска"; exit 1; }
+          [ "$(tar -tzf "$TGZ" | wc -l | tr -d ' ')" = "1" ] || { echo "::error::в архиве не один файл"; exit 1; }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pkg-${{ matrix.target }}
+          path: pkg/*
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0     # файлы уже сжаты, повторное сжатие только тратит время
+
+  # ── Публикация: единственный job с правом записи ────────────────────────────
+  publish:
+    name: Публикация
+    needs: [gate, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.gate.outputs.tag }}
+      VER: ${{ needs.gate.outputs.version }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: assets
+          pattern: pkg-*
+          merge-multiple: true     # четыре файла ложатся в одну папку
+
+      - name: Файлы релиза
+        run: |
+          ls -lh assets/
+          [ "$(find assets -type f | wc -l | tr -d ' ')" = "4" ] || { echo "::error::ожидалось 4 файла"; exit 1; }
+
+      - name: Описание релиза
+        run: bash scripts/github-release/release-notes.sh "$VER" > notes.md
+
+      # Создание и обновление одной командой: повторный прогон на существующем теге
+      # перезаписывает файлы и описание, но не трогает тег: GitHub привязывает релиз к тегу.
+      - name: Создать или обновить релиз
+        env:
+          # Пусто при пуше тега (публикуем сразу), true или false при ручном запуске.
+          IS_DRAFT: ${{ inputs.draft }}
+        run: |
+          DRAFT=false
+          [ "$IS_DRAFT" = "true" ] && DRAFT=true
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Релиз $TAG уже есть: обновляю описание и перезаписываю файлы"
+            # --draft=$DRAFT обязателен: без него релиз, однажды созданный черновиком,
+            # остался бы черновиком навсегда, а прогон при этом был бы зеленым.
+            gh release edit "$TAG" --title "BackupApp $VER" --notes-file notes.md --draft=$DRAFT
+            gh release upload "$TAG" assets/* --clobber
+          elif [ "$DRAFT" = true ]; then
+            gh release create "$TAG" assets/* --verify-tag --title "BackupApp $VER" --notes-file notes.md --draft
+          else
+            gh release create "$TAG" assets/* --verify-tag --title "BackupApp $VER" --notes-file notes.md
+          fi
+          gh release view "$TAG" --json isDraft,url --jq '"черновик: \(.isDraft)  \(.url)"'
+          {
+            echo "## BackupApp $VER"
+            echo
+            echo "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
+          } >> "$GITHUB_STEP_SUMMARY"

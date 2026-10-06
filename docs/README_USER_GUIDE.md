@@ -12,15 +12,40 @@
 
 ## Установка
 
+### Готовая программа
+
+Готовые программы лежат на странице
+[последнего релиза](https://github.com/rvburov/backup-desktop-app/releases/latest). Python
+ставить не нужно.
+
+| Система | Файл |
+| --- | --- |
+| Windows 10 и 11 | `BackupApp-<версия>-windows-x64.exe` |
+| macOS на Apple Silicon (M1 и новее) | `BackupApp-<версия>-macos-arm64.dmg` |
+| macOS на Intel | `BackupApp-<версия>-macos-x64.dmg` |
+| Linux | `BackupApp-<версия>-linux-x64.tar.gz` |
+
+- **Windows**: программа не устанавливается, скачанный файл и есть программа. Положите его
+  в постоянную папку, например в «Документы», и запустите.
+- **macOS**: откройте образ, перетащите BackupApp в «Программы» и запускайте оттуда.
+- **Linux**: распакуйте архив командой `tar -xzf BackupApp-<версия>-linux-x64.tar.gz`
+  и запустите `./BackupApp`.
+
+Программа не подписана платным сертификатом, поэтому при первом запуске Windows и macOS
+попросят подтверждение. Что нажать, написано в описании релиза. Там же сказано, как
+обновиться: настройки и история копирования при обновлении сохраняются.
+
 ### Системные требования
 
-- **Windows**: Windows 10/11, Python 3.8+
-- **Linux**: Ubuntu 18.04+, CentOS 7+, Python 3.8+
-- **macOS**: macOS 10.14+, Python 3.8+
+- **Windows**: Windows 10 или 11, 64 бит
+- **macOS**: macOS 11 и новее, Apple Silicon или Intel
+- **Linux**: для готовой программы Ubuntu 22.04 и новее, Debian 12, Fedora 36 и другие
+  системы того же возраста и новее
+- Для запуска из исходников: Python 3.8+
 - 100 МБ свободного места
 - Разрешения на чтение/запись файлов
 
-### Установка на Windows
+### Запуск из исходников на Windows
 
 ```bash
 # Скачайте Python с python.org
@@ -28,9 +53,7 @@ pip install -r requirements.txt
 python backup-app.py
 ```
 
-Готовый `BackupApp.exe` (см. руководство разработчика, раздел «Процесс сборки») запускается без установки Python.
-
-### Установка на Linux
+### Запуск из исходников на Linux
 
 ```bash
 sudo apt update
@@ -39,7 +62,7 @@ pip3 install -r requirements.txt
 python3 backup-app.py
 ```
 
-### Установка на macOS
+### Запуск из исходников на macOS
 
 ```bash
 brew install python3

@@ -1,5 +1,6 @@
 # Backup Application - Приложение для резервного копирования
 
+![Version](https://img.shields.io/badge/version-9.0.0-blue.svg)
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![PyQt5](https://img.shields.io/badge/PyQt5-5.15+-green.svg)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)
@@ -7,6 +8,12 @@
 ![Safety](https://img.shields.io/badge/Safety-100%25%20Secure-brightgreen.svg)
 
 Многофункциональное кроссплатформенное приложение для автоматического резервного копирования данных с **гарантированной защитой данных** и гибкими настройками расписания.
+
+## 📥 Скачать
+
+Готовые программы для Windows, macOS (Apple Silicon и Intel) и Linux лежат на странице
+[последнего релиза](https://github.com/rvburov/backup-desktop-app/releases/latest). Python
+ставить не нужно. Что нажать при первом запуске, написано там же, в описании релиза.
 
 ## 🛡️ Гарантии безопасности
 
@@ -220,16 +227,20 @@ backup_app/
     tray.py                # иконка в трее, меню, уведомления
     single_instance.py     # защита от второго экземпляра
 tests/                     # pytest: backend, frontend и проверка границ между ними
-BackupApp.spec             # сборка одним файлом без консоли: pyinstaller BackupApp.spec
+BackupApp.spec             # сборка без консоли: один файл на Windows и Linux, BackupApp.app на macOS
+scripts/github-release/    # выпуск релиза: release.sh, проверка версии, история релизов
+.github/workflows/         # tests.yml — тесты при каждом push, release.yml — сборка и публикация релиза
 ```
 
-5. Тесты и сборка
+5. Тесты, сборка и выпуск
 ```bash
 python -m pytest
-pyinstaller BackupApp.spec        # dist/BackupApp.exe
+pyinstaller BackupApp.spec                  # dist/BackupApp.exe, на macOS dist/BackupApp.app
+scripts/github-release/release.sh 9.0.1     # выпуск версии: GitHub соберет программы для трех систем
 ```
 
 ## 📚 Документация
 
 - [📖 Руководство пользователя](docs/README_USER_GUIDE.md) - полное руководство по использованию
 - [⚙️ Руководство разработчика](docs/README_DEVELOPER_GUIDE.md) - для разработчиков и контрибьюторов
+- [🚀 Выпуск релиза](docs/README_RELEASE.md) - как выпустить новую версию и что делает GitHub
