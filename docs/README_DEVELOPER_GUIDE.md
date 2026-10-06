@@ -1,21 +1,27 @@
 # Руководство разработчика Backup Application
 
 ## Содержание
+
 1. [Установка для разработки](#установка-для-разработки)
 2. [Архитектура проекта](#архитектура-проекта)
-3. [Процесс сборки](#процесс-сборки)
-4. [Тестирование](#тестирование)
-5. [Вклад в проект](#вклад-в-проект)
+3. [Фоновый режим](#фоновый-режим)
+4. [Безопасность копирования](#безопасность-копирования)
+5. [Настройки и журнал](#настройки-и-журнал)
+6. [Процесс сборки](#процесс-сборки)
+7. [Тестирование](#тестирование)
+8. [Вклад в проект](#вклад-в-проект)
 
 ## Установка для разработки
 
 ### Клонирование репозитория
+
 ```bash
 git clone https://github.com/yourusername/backup-app.git
 cd backup-app
 ```
 
 ### Создание виртуального окружения
+
 ```bash
 # Windows
 python -m venv venv
@@ -27,341 +33,310 @@ source venv/bin/activate
 ```
 
 ### Установка зависимостей
+
 ```bash
 pip install -r requirements.txt
-
-# Или установка вручную
-pip install PyQt5==5.15.9
 ```
 
+Один файл содержит всё: PyQt5 для приложения, PyInstaller для сборки, pytest и pyflakes для проверки.
+
 ### Запуск в режиме разработки
+
 ```bash
-python backup_app.py
+python backup-app.py              # открыть окно
+python backup-app.py --minimized  # запуск в фоне: окно скрыто, иконка в трее
+python -m backup_app              # то же самое через пакет
+```
+
+Две переменные окружения позволяют запустить отладочную копию рядом с рабочей:
+
+- `BACKUPAPP_CONFIG_DIR` задаёт свою папку настроек и журнала, рабочие настройки не меняются;
+- `BACKUPAPP_INSTANCE_KEY` задаёт свой ключ одиночного экземпляра. Без него вторая копия
+  только покажет окно уже запущенной и завершится.
+
+```bash
+BACKUPAPP_CONFIG_DIR=/tmp/backupapp-dev BACKUPAPP_INSTANCE_KEY=dev python backup-app.py
 ```
 
 ## Архитектура проекта
 
+Приложение разделено на бэкенд и фронтенд.
+
+- **Бэкенд** (`backup_app/backend`) содержит всю логику: копирование, расписание, проверки,
+  правила безопасности, настройки, автозапуск и журнал. Он написан на чистом Python
+  и не импортирует ни Qt, ни фронтенд. Его можно запускать и тестировать без окна.
+- **Фронтенд** (`backup_app/frontend`) содержит только интерфейс на PyQt5: окно, вкладки, трей,
+  защиту от второго экземпляра. Он показывает состояние бэкенда, передаёт ему команды
+  и получает от него события. К бэкенду обращается только через пакет `backup_app.backend`.
+- **Точка сборки** (`backup_app/main.py`) создаёт бэкенд и фронтенд и связывает их.
+
+Границы проверяются тестами `tests/test_architecture.py`: бэкенд не загружает ни одного модуля
+PyQt5, фронтенд импортирует только публичные имена бэкенда и не работает с файлами напрямую.
+
 ### Структура проекта
-```bash
-backup-app/
-├── backup_app.py          # Основной класс приложения
-├── main.py                # Точка входа
-├── requirements.txt       # Зависимости
-├── README.md
-├── USER_GUIDE.md
-└── DEVELOPER_GUIDE.md
+
+```
+backup-desktop-app/
+├── backup-app.py                  # Точка входа (тонкий лаунчер)
+├── backup_app/
+│   ├── __main__.py                # python -m backup_app
+│   ├── main.py                    # Точка сборки: бэкенд + фронтенд
+│   ├── backend/                   # Логика, чистый Python, без Qt
+│   │   ├── __init__.py            # Публичное API бэкенда и create_service()
+│   │   ├── service.py             # BackupService: настройки, расписание, запуск, события
+│   │   ├── events.py              # События для интерфейса
+│   │   ├── copier.py              # BackupRunner: копирование в два прохода
+│   │   ├── safety.py              # Правила безопасности: ссылки, системные пути, длина пути
+│   │   ├── scheduler.py           # Расчёт следующего и предыдущего запуска
+│   │   ├── settings_store.py      # AppConfig, TabConfig, SettingsStore
+│   │   ├── ini.py                 # Чтение и запись INI в формате QSettings
+│   │   ├── autostart.py           # Автозапуск: реестр Windows, .desktop, LaunchAgents
+│   │   ├── logger.py              # Файл журнала с ротацией
+│   │   ├── paths.py               # Папка настроек, журнал, путь лаунчера
+│   │   └── constants.py
+│   └── frontend/                  # Интерфейс на PyQt5, без логики
+│       ├── app.py                 # QtFrontend: QApplication, одиночный экземпляр, запуск
+│       ├── bridge.py              # ServiceBridge: события и журнал бэкенда в поток интерфейса
+│       ├── main_window.py         # MainWindow: виджеты, команды, отображение событий
+│       ├── tab_page.py            # TabPage: списки папок и файлов, папка назначения
+│       ├── tray.py                # TrayIcon: меню, подсказка, уведомления
+│       ├── single_instance.py     # SingleInstance на QLocalServer/QLocalSocket
+│       ├── resources.py           # Пути к иконкам с учётом PyInstaller
+│       └── constants.py
+├── tests/
+│   ├── backend/                   # Тесты бэкенда, без Qt
+│   ├── frontend/                  # Тесты интерфейса поверх настоящего бэкенда
+│   └── test_architecture.py       # Проверка границ между слоями
+├── .github/workflows/tests.yml    # CI: pyflakes + pytest на Windows и Linux
+├── BackupApp.spec                 # Сборка одним файлом без консоли
+├── requirements.txt               # Все зависимости
+├── settings_ example.ini          # Пример файла настроек с описанием ключей
+├── icon.ico / icon.png / icon.icns, icons/
+└── docs/
+```
+
+### Модули бэкенда
+
+| Модуль                | Отвечает за                                                                  |
+| --------------------- | ---------------------------------------------------------------------------- |
+| `service.py`          | единственная точка входа: настройки, расписание, запуск, проверки, события   |
+| `copier.py`           | обход папок, копирование, именование копий, проверка места, итог             |
+| `safety.py`           | ссылки, системные пути, типы файлов, лимит размера, длина пути               |
+| `scheduler.py`        | время следующего и предыдущего запуска                                       |
+| `settings_store.py`   | структура настроек, значения по умолчанию, совместимость со старым форматом  |
+| `ini.py`              | формат INI, совместимый с QSettings, включая блоки `@Variant`                |
+| `autostart.py`        | включение, отключение и проверка автозапуска                                 |
+| `logger.py`           | файл журнала с ротацией                                                      |
+| `events.py`           | события, которые получает интерфейс                                          |
+
+### Как слои общаются
+
+1. Пользователь нажимает кнопку. `MainWindow` вызывает метод `BackupService`, например
+   `run_now()`, `start_schedule()` или `update_config()`. Метод возвращает список проблем,
+   если команду выполнить нельзя, и окно показывает диалог.
+2. Сервис запускает копирование в своём фоновом потоке. Планировщик тоже работает в фоновом
+   потоке сервиса и сам вызывает `tick()`.
+3. О происходящем сервис сообщает событиями: `BackupStarted`, `BackupProgress`, `BackupFinished`,
+   `RunSkipped`, `ScheduleChanged`, `ConfigChanged`.
+4. `ServiceBridge` подписан на события и на журнал. Он превращает их в сигналы Qt, поэтому окно
+   получает их в своём потоке и меняет виджеты безопасно.
+
+```python
+service = create_service()               # бэкенд: настройки и журнал в папке пользователя
+bridge = ServiceBridge(service)          # фронтенд: доставка событий в поток интерфейса
+window = MainWindow(service, bridge)
+service.start()                          # возобновить расписание, запустить планировщик
 ```
 
 ### Ключевые классы
 
-#### BackupApp (QMainWindow)
-Главный класс приложения, отвечающий за:
-- Управление интерфейсом
-- Обработку событий
-- Координацию компонентов
-- Управление настройками
+#### BackupService
 
 ```python
-class BackupApp(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.settings = QSettings("MyCompany", "BackupApp")
-        self.init_ui()
-        self.load_settings()
+service.start(run_scheduler=True)  # синхронизация автозапуска, возобновление расписания
+service.update_config(config)      # изменения из окна; служебные поля сервис ведёт сам
+service.start_schedule() -> list   # пустой список, если расписание включено
+service.stop_schedule()
+service.run_now(scheduled=False) -> list
+service.cancel()
+service.tick(now=None) -> bool     # проверка расписания; вызывается планировщиком
+service.reset() -> AppConfig
+service.set_autostart(enabled)     # при ошибке бросает исключение
+service.source_problem(path)       # проверки путей для интерфейса
+service.shutdown()
 ```
 
-#### BackupWorker (QThread)
-Класс для выполнения резервного копирования в отдельном потоке:
-- Многопоточное копирование
-- Отслеживание прогресса
-- Безопасная отмена операции
+Пока идёт копирование, новое не запускается: `run_now()` возвращает `ALREADY_RUNNING`.
+В конструктор можно передать свои часы (`now=`), интервал проверки и модуль автозапуска,
+так сервис тестируется без ожидания реального времени.
+
+#### BackupRunner
+
+Копирует за два прохода. Первый проход считает файлы и объём и записывает пропуски по правилам
+безопасности. Второй проход копирует и записывает ошибки. `BackupResult.status` принимает
+значения `ok`, `partial` (были ошибки), `cancelled`, `failed`. Пропуски по правилам безопасности
+лежат в `BackupResult.skipped` и ошибками не считаются.
+
+#### Schedule / next_run / previous_run
 
 ```python
-class BackupWorker(QThread):
-    progress_updated = pyqtSignal(int)
-    status_updated = pyqtSignal(str)
-    finished_signal = pyqtSignal(bool, str)
+schedule = Schedule(PERIOD_MONTHLY, time(10, 0), monthday=31)
+next_run(schedule, now)      # ближайший запуск строго после now, 31-е обрезается до конца месяца
+previous_run(schedule, now)  # последний запуск не позже now, нужен для пропущенных копирований
 ```
 
-### Основные методы BackupApp
+#### MainWindow
 
-- `init_ui()` - инициализация пользовательского интерфейса
-- `setup_custom_statusbar()` - создание статус-бара с прогрессом
-- `start_backup_thread()` - запуск резервного копирования в потоке
-- `calculate_total_backup_size()` - расчет общего размера файлов
-- `load_settings()` / `save_settings()` - управление настройками
-- `toggle_auto_start()` - управление автозапуском
+- `apply_config()` показывает настройки бэкенда в виджетах, `collect_config()` собирает их обратно;
+  любое изменение сразу уходит в `service.update_config()`.
+- `on_backend_event()` отображает события: прогресс, итог, расписание, уведомления.
+- `closeEvent()`, `changeEvent()`, `hide_to_tray()`, `quit_app()` управляют поведением в трее.
 
-### Модули и зависимости
-- **PyQt5** - графический интерфейс
-- **shutil** - операции с файлами
-- **os/sys** - системные функции
-- **platform** - определение платформы
-- **datetime** - работа с датами и временем
+## Фоновый режим
 
-### События и сигналы
+- Главное окно не завершает приложение: `app.setQuitOnLastWindowClosed(False)`, закрытие и
+  сворачивание прячут окно в трей, если трей доступен и включена настройка `minimize_to_tray`.
+- Флаг `--minimized` (а также `--hidden`, `-m`) запускает приложение без окна. Автозапуск всегда
+  использует этот флаг; в режиме скрипта на Windows подставляется `pythonw.exe`.
+- `SingleInstance` слушает локальный сокет `BackupApp-single-instance-<пользователь>`.
+  Второй экземпляр подключается, просит показать окно и завершается.
+- Планировщик работает в потоке бэкенда. Он просыпается не реже раза в минуту и точно к моменту
+  запуска, поэтому копирование начинается вовремя и после выхода компьютера из сна.
+- Плановые запуски не открывают диалогов: проблемы пишутся в журнал и приходят событием
+  `RunSkipped`, а интерфейс показывает уведомление в трее.
+- Пропущенное копирование: при запуске сравниваются `previous_run(schedule)` и
+  максимум из `last_backup_time` и `timer_started_at`. Если копирование должно было произойти
+  позже обеих отметок, оно выполняется через `MISSED_RUN_DELAY_SECONDS` после старта.
+- Если системный трей недоступен, закрытие окна завершает приложение, об этом пишется
+  предупреждение в журнал.
 
-#### Сигналы BackupWorker
-- `progress_updated(int)` - обновление прогресса (0-100%)
-- `status_updated(str)` - обновление статуса операции
-- `finished_signal(bool, str)` - завершение операции (успех/ошибка, сообщение)
+## Безопасность копирования
 
-#### Таймеры и обработчики
-- `backup_timer.timeout` - таймер проверки времени автоматического копирования
-- `button.clicked` - обработка нажатий кнопок
-- `comboBox.currentTextChanged` - изменение настроек
+Правила собраны в `backend/safety.py` и применяются в `backend/copier.py`:
 
-### Методы управления автозапуском
+- ссылки и junction внутри выбранных папок пропускаются; явно выбранная ссылка копируется;
+- системные папки и файлы нельзя выбрать источником или назначением и они пропускаются при обходе
+  (`system_paths()` и имена в корне диска Windows вроде `$Recycle.Bin`);
+- копируются только обычные файлы, специальные файлы пропускаются;
+- файлы больше лимита пропускаются, лимит берётся из настройки `max_file_size_gb`, 0 снимает его;
+- путь копии не длиннее `MAX_PATH_LENGTH = 240`: имя файла укорачивается функцией `shorten_name()`,
+  слишком глубокая папка пропускается;
+- путь копии проверяется функцией `is_inside()`, относительный путь с «..» отбрасывается;
+- папка назначения внутри копируемой папки при обходе пропускается.
 
-#### Кросс-платформенный автозапуск
-```python
-def toggle_auto_start(self, state):
-    """Включает/выключает автозапуск при старте системы"""
+Каждое событие пишется в журнал с меткой `[SECURITY]`. Однотипных записей за одно копирование
+пишется не больше `LOG_LIMIT = 200`, затем итоговое число.
 
-def enable_auto_start(self) -> bool:
-    """Добавляет приложение в автозагрузку"""
+## Настройки и журнал
 
-def disable_auto_start(self):
-    """Удаляет приложение из автозагрузки"""
-```
+Папка настроек совпадает с прежней, которую выбирал `QStandardPaths.AppConfigLocation`:
 
-#### Платформенно-специфичные реализации
-- `_enable_auto_start_windows()` - реализация для Windows
-- `_enable_auto_start_linux()` - реализация для Linux  
-- `_enable_auto_start_macos()` - реализация для macOS
+| ОС      | settings.ini                                   | журнал                                         |
+| ------- | ---------------------------------------------- | ---------------------------------------------- |
+| Windows | `%LOCALAPPDATA%\BackupApp\settings.ini`        | `%LOCALAPPDATA%\BackupApp\logs\backup-app.log` |
+| Linux   | `~/.config/BackupApp/settings.ini`             | `~/.config/BackupApp/logs/backup-app.log`      |
+| macOS   | `~/Library/Preferences/BackupApp/settings.ini` | рядом, в `logs/`                               |
+
+Файл настроек читается и пишется модулем `backend/ini.py` без Qt, в том же формате, что писал
+QSettings. Старые файлы открываются без изменений, включая списки из одного пути, которые
+PyQt5 сохранял двоичным блоком `@Variant(...)`. Новые файлы пишут такой список обычной строкой,
+поэтому их читают и прежние версии. Запись атомарная: через временный файл.
+
+Журнал ведётся через `logging` с `RotatingFileHandler` (1 МБ, 3 файла). Интерфейс подключает
+к тому же логгеру свой обработчик через `ServiceBridge`.
+
+Ключи `[General]`: `period_type`, `backup_time`, `weekday`, `monthday`, `keep_history`,
+`create_backup_folder`, `auto_start`, `timer_active`, `copy_folder_contents`, `copy_all_tabs`,
+`minimize_to_tray`, `show_notifications`, `run_missed`, `max_file_size_gb`, `active_tab`,
+`last_backup_time`, `timer_started_at`, `tab_count`, `tab_names`. Вкладки — секции `[Tab_0]`,
+`[Tab_1]`, … с ключами `source_folders`, `source_files`, `destination_folder`, `tab_title`.
+Недоступные пути из настроек не удаляются, а подсвечиваются в списках.
 
 ## Процесс сборки
 
 ### Сборка с PyInstaller
+
 ```bash
-pip install pyinstaller
-
-# Сборка для Windows
-pyinstaller --onefile --noconsole --icon=icon.ico --name="BackupApp" --add-data="settings.ini;." --add-data="icons/*;icons/" --add-data="icon.ico;." backup-app_version_v8.py
-
-# Сборка для Linux
-pyinstaller --onefile --noconsole --icon=icon.png --name="BackupApp" --add-data="settings.ini:." --add-data="icons/*:icons/" --add-data="icon.ico;." backup-app.py
-
-# Сборка для macOS
-pyinstaller --onefile --noconsole --icon=icon.icns --name="BackupApp" --add-data="settings.ini:." --add-data="icons/*:icons/" --add-data="icon.ico;." backup-app.py
+pip install -r requirements.txt
+pyinstaller BackupApp.spec
 ```
 
-### Конфигурация PyInstaller
-Создайте файл `backup-app.spec`:
-```python
-# -*- mode: python ; coding: utf-8 -*-
+Результат: один файл `dist/BackupApp.exe` (Windows) или `dist/BackupApp` (Linux/macOS), без окна
+консоли. В сборку включаются `icon.ico` и папка `icons/`; модуль `PyQt5.QtNetwork` указан в
+`hiddenimports`, он нужен для защиты от второго экземпляра. Файл `settings.ini` при первом
+запуске приложение создаёт само.
 
-block_cipher = None
+Особенности платформ:
 
-a = Analysis(
-    ['backup-app.py'],
-    pathex=[],
-    binaries=[],
-    datas=[
-        ('settings.ini', '.'),
-        ('icons/files_icon.png', 'icons'),
-        ('icons/settings_icon.png', 'icons'),
-    ],
-    hiddenimports=[],
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[],
-    excludes=[],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
-    noarchive=False,
-)
-
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
-
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    [],
-    name='BackupApp',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=False,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon=['icon.ico' if hasattr(sys, 'getwindowsversion') else None][0],
-)
-```
-
-### Особенности сборки для разных платформ
-
-#### Windows
-```bash
-pyinstaller --onefile --noconsole --icon=icon.ico --name="BackupApp" backup_app.py
-```
-
-#### Linux
-```bash
-pyinstaller --onefile --noconsole --name="BackupApp" backup_app.py
-```
-
-#### macOS
-```bash
-pyinstaller --onefile --noconsole --name="BackupApp" backup_app.py
-```
+- **Windows**: `console=False`, иконка `icon.ico`; собранный exe автозапуск регистрирует
+  как `"...\BackupApp.exe" --minimized`.
+- **Linux**: для трея нужна панель с поддержкой StatusNotifier/XEmbed; без неё приложение
+  предупредит в журнале и будет завершаться при закрытии окна.
+- **macOS**: иконка `icon.icns`; для .app-бандла добавьте в spec `BUNDLE(...)`.
 
 ## Тестирование
 
-### Установка тестовых зависимостей
+### Запуск
+
 ```bash
-pip install pytest pytest-qt coverage pytest-cov
+pip install -r requirements.txt
+python -m pyflakes backup_app tests backup-app.py
+python -m pytest                       # все тесты
+python -m pytest tests/backend         # только бэкенд, Qt не нужен
+python -m pytest tests/frontend -v     # интерфейс
 ```
+
+Тесты не требуют дисплея: `conftest.py` выставляет `QT_QPA_PLATFORM=offscreen`, подменяет
+функции автозапуска, чтобы ничего не записывать в реестр, и даёт каждому тесту временную папку
+настроек. Тесты junction запускаются только на Windows, тесты символьных ссылок требуют права
+на их создание, тест именованного канала запускается только на Linux и macOS.
 
 ### Структура тестов
+
 ```
 tests/
-├── __init__.py
-├── test_backup.py
-├── test_ui.py
-├── test_worker.py
-└── conftest.py
+├── conftest.py               # фикстуры qapp, config_dir, log_records, изоляция автозапуска
+├── helpers.py                # make_tree, list_rel, pump, wait_for
+├── test_architecture.py      # бэкенд без Qt, фронтенд только через API бэкенда
+├── backend/
+│   ├── test_service.py       # расписание, запуск, события, пропущенные копирования, автозапуск
+│   ├── test_copier.py        # копирование, именование, ошибки, отмена, несколько заданий
+│   ├── test_safety.py        # каждое правило безопасности на настоящих файлах
+│   ├── test_ini.py           # совместимость с форматом QSettings, сверка с настоящим QSettings
+│   ├── test_settings_store.py
+│   ├── test_scheduler.py
+│   └── test_autostart.py
+└── frontend/
+    ├── test_main_window.py   # окно поверх настоящего сервиса
+    ├── test_bridge.py        # события из фоновых потоков приходят в поток интерфейса
+    ├── test_single_instance.py
+    └── test_app.py
 ```
 
-### Запуск тестов
-```bash
-# Все тесты
-pytest tests/
+### Как тестировать сервис и окно
 
-# С покрытием кода
-pytest --cov=backup_app tests/
-
-# Конкретный тест
-pytest tests/test_backup.py::TestBackupApp::test_add_folder
-
-# Тесты с выводом подробной информации
-pytest -v tests/
-```
-
-### Примеры тестов
-
-#### Тестирование UI
 ```python
-# tests/test_ui.py
-import pytest
-from PyQt5.QtWidgets import QApplication
-from backup_app import BackupApp
-
-class TestBackupAppUI:
-    @pytest.fixture
-    def app(self):
-        application = QApplication([])
-        window = BackupApp()
-        yield window
-        application.quit()
-    
-    def test_initial_state(self, app):
-        assert app.folders_list.count() == 0
-        assert app.files_list.count() == 0
-        assert app.dest_edit.text() == ""
-    
-    def test_add_folder(self, app):
-        initial_count = app.folders_list.count()
-        # Симуляция добавления папки через мок
-        app.source_folders.append("/test/path")
-        app.folders_list.addItem("/test/path")
-        assert app.folders_list.count() == initial_count + 1
+def test_tick_runs_backup_when_due(make_service, paths):
+    service, events, clock = make_service(ready_config(paths))  # свои часы, без Qt
+    service.start_schedule()
+    service.tick(service.next_run + timedelta(seconds=1))       # наступило время запуска
+    assert service.wait_idle(10)
+    assert isinstance(events[-1], BackupFinished)
 ```
 
-#### Тестирование логики резервного копирования
-```python
-# tests/test_backup.py
-import pytest
-import tempfile
-import os
-from backup_app import BackupWorker
+Фикстура `env` в тестах окна создаёт настоящий сервис и подменяет `QMessageBox` и
+`TrayIcon.notify` на записывающие заглушки: тест проверяет, что из плановых запусков не открылся
+ни один диалог.
 
-class TestBackupWorker:
-    def test_calculate_total_backup_size(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Создаем тестовые файлы
-            test_file = os.path.join(temp_dir, "test.txt")
-            with open(test_file, 'w') as f:
-                f.write("test content")
-            
-            worker = BackupWorker([temp_dir], [], temp_dir, False, False, False)
-            size = worker.calculate_total_backup_size()
-            assert size > 0
-    
-    def test_backup_validation(self, app):
-        # Тестируем проверку условий
-        assert not app.validate_backup_conditions()
-        
-        # Добавляем тестовые данные и проверяем снова
-        app.source_folders.append("/test/path")
-        app.destination_folder = "/test/dest"
-        # Мокаем os.path.exists чтобы возвращать True
-        # ...
-```
+### CI
 
-#### Тестирование автозапуска
-```python
-# tests/test_autostart.py
-import pytest
-from unittest.mock import patch, MagicMock
-
-class TestAutoStart:
-    @patch('platform.system')
-    def test_auto_start_windows(self, mock_system):
-        mock_system.return_value = 'Windows'
-        # Тестируем логику автозапуска для Windows
-        # ...
-```
-
-### Интеграционное тестирование
-
-#### GitHub Actions
-```yaml
-# .github/workflows/test.yml
-name: Tests
-on: [push, pull_request]
-
-jobs:
-  test:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: [3.8, 3.9, 3.10]
-    
-    steps:
-    - uses: actions/checkout@v3
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pytest pytest-qt coverage pytest-cov
-    
-    - name: Run tests
-      run: pytest --cov=backup_app tests/
-    
-    - name: Upload coverage
-      uses: codecov/codecov-action@v3
-```
+`.github/workflows/tests.yml` запускает pyflakes и pytest на `windows-latest` и `ubuntu-latest`
+(Python 3.11 и 3.12). На Linux перед запуском ставятся системные библиотеки Qt.
 
 ## Вклад в проект
 
 ### Процесс разработки
+
 1. Форкните репозиторий
 2. Создайте feature-ветку: `git checkout -b feature/amazing-feature`
 3. Закоммитьте изменения: `git commit -m 'Add amazing feature'`
@@ -369,13 +344,17 @@ jobs:
 5. Откройте Pull Request
 
 ### Стандарты кода
+
 - Соблюдайте PEP8
 - Документируйте публичные методы с использованием docstrings
 - Пишите тесты для новой функциональности
 - Обновляйте документацию
 - Используйте type hints для аргументов и возвращаемых значений
+- Логика живёт только в бэкенде и не импортирует Qt; интерфейс обращается к бэкенду
+  только через `backup_app.backend`. Это проверяет `tests/test_architecture.py`
 
 ### Структура коммитов
+
 ```
 feat: добавление новой функциональности
 fix: исправление ошибки
@@ -387,6 +366,7 @@ perf: изменения улучшающие производительност
 ```
 
 ### Code Review процесс
+
 1. Проверка соответствия стандартам кодирования
 2. Тестирование функциональности на разных платформах
 3. Проверка документации и комментариев
@@ -396,31 +376,29 @@ perf: изменения улучшающие производительност
 ### Особенности разработки для разных платформ
 
 #### Windows
-- Используйте обратные слеши в путях
+
 - Учитывайте ограничения длины путей
-- Тестируйте работу с автозапуском через реестр
+- Тестируйте работу с автозапуском через реестр (в тестах реестр подменяется)
+- Для запуска без консоли используйте `pythonw.exe`
 
 #### Linux
-- Используйте прямые слеши в путях
+
 - Учитывайте права доступа к файлам
-- Тестируйте работу с .desktop файлами
+- Тестируйте работу с .desktop файлами и доступность трея в вашей оболочке
 
 #### macOS
+
 - Учитывайте sandbox ограничения
 - Тестируйте работу с LaunchAgents
 - Проверяйте совместимость с разными версиями macOS
 
 ### Отладка и диагностика
 
-#### Включение отладочного режима
+Журнал приложения уже пишется в файл (см. раздел «Настройки и журнал»). Чтобы получить больше
+подробностей, поднимите уровень при настройке:
+
 ```python
 import logging
-logging.basicConfig(level=logging.DEBUG)
-```
-
-#### Мониторинг использования памяти
-```python
-import psutil
-process = psutil.Process()
-memory_info = process.memory_info()
+from backup_app.backend import setup_file_logging
+setup_file_logging(log_directory, level=logging.DEBUG)
 ```
