@@ -44,6 +44,42 @@ def test_parse_restores_entries_and_skips_garbage():
     assert parse_history(text) == items
 
 
+def test_tab_ids_are_stored_in_the_file_but_not_shown():
+    item = HistoryEntry(datetime(2026, 10, 8, 9, 0), "Плановое копирование: Документы, Фото",
+                        ("подробность",), ("a1b2c3d4e5f6", "0123456789ab"))
+    assert item.lines() == ["08.10.2026 09:00  Плановое копирование: Документы, Фото", DETAIL_INDENT + "подробность"]
+    assert item.file_lines() == [
+        "08.10.2026 09:00  Плановое копирование: Документы, Фото",
+        DETAIL_INDENT + "#tabs: a1b2c3d4e5f6 0123456789ab",
+        DETAIL_INDENT + "подробность",
+    ]
+    assert parse_history("\n".join(item.file_lines())) == [item]
+
+
+def test_old_file_without_tab_ids_is_parsed():
+    text = ("05.10.2026 10:00  Ручное копирование: Данные\n"
+            "05.10.2026 10:01  ⚠ Скопировано 1 файл, ошибок: 1\n"
+            "                    Не скопирован a.txt: нет доступа\n")
+    assert parse_history(text) == [
+        HistoryEntry(datetime(2026, 10, 5, 10, 0), "Ручное копирование: Данные"),
+        HistoryEntry(datetime(2026, 10, 5, 10, 1), "⚠ Скопировано 1 файл, ошибок: 1",
+                     ("Не скопирован a.txt: нет доступа",)),
+    ]
+
+
+def test_store_keeps_tab_ids_after_restart_and_rewrite(tmp_path):
+    path = tmp_path / "history.txt"
+    old = HistoryEntry(NOW - timedelta(days=400), "✓ Старое копирование", (), ("old",))
+    tagged = HistoryEntry(NOW - timedelta(days=1), "✓ Успешно скопировано 2 файла", ("подробность",), ("a1", "b2"))
+    path.write_text("\n".join(old.file_lines() + tagged.file_lines()) + "\n", encoding="utf-8")
+    store = HistoryStore(str(path), now=Clock(NOW))
+    assert store.entries() == [tagged]  # старая запись удалена, файл переписан
+    assert "#tabs: a1 b2" in path.read_text(encoding="utf-8")
+    later = HistoryEntry(NOW, "Расписание остановлено: Фото", (), ("c3",))
+    store.add(later)  # дописывается в конец файла
+    assert HistoryStore(str(path), now=Clock(NOW)).entries() == [tagged, later]
+
+
 def test_limit_details_keeps_first_ones_and_counts_the_rest():
     details = [f"ошибка {number}" for number in range(MAX_DETAILS + 5)]
     limited = limit_details(details)

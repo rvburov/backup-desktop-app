@@ -22,6 +22,10 @@ MAX_PATH_LENGTH = 240
 DEFAULT_MAX_FILE_SIZE_GB = 2
 GB = 1024 ** 3
 
+# Подсказки к путям в списке источников (path_problem).
+PATH_UNAVAILABLE = "Путь сейчас недоступен (диск не подключен или путь удален). Будет пропущен при копировании."
+PATH_SYSTEM = "Системный путь: будет пропущен при копировании."
+
 # Запас длины пути под суффикс «_дд.мм.гггг_чч-мм-сс_(N)», который добавляется при совпадении имен.
 NAME_SUFFIX_RESERVE = 26
 # Самое короткое имя файла, до которого допускается укорачивание.
@@ -200,7 +204,7 @@ def destination_problem(path: str, protected: ProtectedPaths) -> Optional[str]:
 def path_problem(path: str, protected: ProtectedPaths) -> Optional[str]:
     """Подсказка для пути в списке источников: недоступен или системный."""
     if not os.path.exists(path):
-        return "Путь сейчас недоступен (диск не подключен или путь удален). Будет пропущен при копировании."
+        return PATH_UNAVAILABLE
     if protected.contains(path):
-        return "Системный путь: будет пропущен при копировании."
+        return PATH_SYSTEM
     return None
