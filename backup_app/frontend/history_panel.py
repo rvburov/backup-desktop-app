@@ -19,6 +19,7 @@ from .theme import C, font_exact as font
 ICON_COLORS = {ICON_OK: C.OK, ICON_WARNING: C.WARN, ICON_ERROR: C.DANGER}
 TIME_FORMAT = "%d.%m.%Y %H:%M"
 MAX_LIST_HEIGHT = 150
+RELAYOUT_MS = 120   # пауза после изменения ширины, после которой строки истории перекладываются
 
 
 def split_icon(text: str) -> Tuple[str, str]:
@@ -69,18 +70,43 @@ class HistoryModel(QAbstractListModel):
 
 
 class HistoryDelegate(QStyledItemDelegate):
-    """Рисует запись: поля 3px 14px, время 116 px, значок 14 px, текст и подробности с переносом."""
+    """Рисует запись: поля 3px 14px, время 116 px, значок 14 px, текст и подробности с переносом.
+
+    Кэши ключуются самой записью (HistoryEntry неизменяема и сравнивается по значению), а не id():
+    после удаления старых записей id может достаться новой записи. Высота строки, которая
+    помещается без переноса, считается по ширине текста без раскладки: при изменении ширины окна
+    раскладка (QTextLayout) нужна только длинным записям и видимым строкам.
+    """
 
     PAD_X, PAD_Y = 14, 3
     TIME_W, ICON_W, GAP = 116, 14, 10
     TEXT_X = PAD_X + TIME_W + GAP + ICON_W + GAP      # 164: и текст, и подробности (margin-left 150)
+    HEAD_PX, DETAIL_PX = 12.5, 12
+    CACHE_LIMIT = 40000
+    LAYOUT_LIMIT = 400
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._cache = {}
+        self._natural = {}   # запись → (значок, текст, ширина текста, ширины подробностей): от ширины не зависит
+        self._heights = {}   # (запись, ширина) → высота строки
+        self._layouts = {}   # (запись, ширина) → раскладка для рисования (только видимые строки)
+        self._steps = None
 
     def clear_cache(self) -> None:
-        self._cache = {}
+        """Забыть высоты и раскладки (ширина изменилась)."""
+        self._heights = {}
+        self._layouts = {}
+
+    def forget(self) -> None:
+        """Забыть все (новый набор записей)."""
+        self.clear_cache()
+        self._natural = {}
+
+    def _line_steps(self) -> Tuple[float, float]:
+        if self._steps is None:
+            self._steps = tuple(max(QFontMetricsF(font("regular", px)).height(), px * 1.4)
+                                for px in (self.HEAD_PX, self.DETAIL_PX))
+        return self._steps
 
     @staticmethod
     def _layout(text: str, px: float, role: str, width: float) -> Tuple[QTextLayout, float]:
@@ -104,26 +130,57 @@ class HistoryDelegate(QStyledItemDelegate):
         layout.endLayout()
         return layout, max(y, step)
 
+    def _natural_widths(self, entry: HistoryEntry):
+        cached = self._natural.get(entry)
+        if cached is None:
+            icon, text = split_icon(entry.text)
+            head = QFontMetricsF(font("regular", self.HEAD_PX)).horizontalAdvance(text)
+            detail = QFontMetricsF(font("regular", self.DETAIL_PX))
+            cached = (icon, text, head, tuple(detail.horizontalAdvance(d) for d in entry.details))
+            if len(self._natural) > self.CACHE_LIMIT:
+                self._natural = {}
+            self._natural[entry] = cached
+        return cached
+
+    def _text_width(self, width: int) -> int:
+        return max(40, width - self.TEXT_X - self.PAD_X)
+
+    def row_height(self, entry: HistoryEntry, width: int) -> int:
+        key = (entry, width)
+        height = self._heights.get(key)
+        if height is None:
+            _icon, _text, head_w, detail_ws = self._natural_widths(entry)
+            text_w = self._text_width(width) - 1
+            if head_w <= text_w and all(w <= text_w for w in detail_ws):
+                head_step, detail_step = self._line_steps()   # все в одну строку: раскладка не нужна
+                height = int(self.PAD_Y * 2 + head_step + detail_step * len(detail_ws) + 0.5)
+            else:
+                height = self._parts(entry, width)[4]
+            if len(self._heights) > self.CACHE_LIMIT:
+                self._heights = {}
+            self._heights[key] = height
+        return height
+
     def _parts(self, entry: HistoryEntry, width: int):
-        key = (id(entry), width)
-        cached = self._cache.get(key)
+        key = (entry, width)
+        cached = self._layouts.get(key)
         if cached is not None:
             return cached
-        icon, text = split_icon(entry.text)
-        text_w = max(40, width - self.TEXT_X - self.PAD_X)
-        head, head_h = self._layout(text, 12.5, "regular", text_w)
-        details = [self._layout(detail, 12, "regular", text_w) for detail in entry.details]
+        icon, text, _head_w, _detail_ws = self._natural_widths(entry)
+        text_w = self._text_width(width)
+        head, head_h = self._layout(text, self.HEAD_PX, "regular", text_w)
+        details = [self._layout(detail, self.DETAIL_PX, "regular", text_w) for detail in entry.details]
         height = self.PAD_Y * 2 + head_h + sum(h for _l, h in details)
         result = (icon, head, head_h, details, int(height + 0.5))
-        if len(self._cache) > 20000:
-            self._cache = {}
-        self._cache[key] = result
+        if len(self._layouts) > self.LAYOUT_LIMIT:
+            self._layouts = {}
+        self._layouts[key] = result
         return result
 
     def sizeHint(self, option, index):  # noqa: N802
         entry = index.data(Qt.UserRole)
         width = option.rect.width() or 600
-        return QSize(width, self._parts(entry, width)[4])
+        return QSize(width, self.row_height(entry, width))
 
     def paint(self, p, option, index):
         entry = index.data(Qt.UserRole)
@@ -131,6 +188,7 @@ class HistoryDelegate(QStyledItemDelegate):
         icon, head, head_h, details, _height = self._parts(entry, r.width())
         color = QColor(ICON_COLORS.get(icon, C.TEXT2))
         p.save()
+        p.setClipRect(r)  # пока ширина меняется, высота строки может отставать от раскладки
         top = r.top() + self.PAD_Y
         line_h = 12.5 * 1.4
         p.setFont(font("mono", 11.5))
@@ -166,19 +224,24 @@ class HistoryView(QListView):
         self.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setResizeMode(QListView.Adjust)
         self.setViewportMargins(0, 4, 0, 4)
         self.setFocusPolicy(Qt.TabFocus)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.verticalScrollBar().setSingleStep(20)
         self._width = 0
+        # пока ширину тянут мышью, строки не перекладываются на каждом шаге: высоты всех записей
+        # пересчитываются один раз, когда ширина перестала меняться
+        self._relayout_timer = QTimer(self)
+        self._relayout_timer.setSingleShot(True)
+        self._relayout_timer.setInterval(RELAYOUT_MS)
+        self._relayout_timer.timeout.connect(self._relayout)
 
     def content_height(self, limit: int = MAX_LIST_HEIGHT) -> int:
         """Высота записей (с конца), пока не превысит limit."""
         width = self.viewport().width() or self.width() or 600
         total = 0
         for entry in reversed(self.model_.entries):
-            total += self.delegate._parts(entry, width)[4]
+            total += self.delegate.row_height(entry, width)
             if total >= limit:
                 break
         return total
@@ -190,11 +253,20 @@ class HistoryView(QListView):
         self.scrollToBottom()
         QTimer.singleShot(0, self.scrollToBottom)
 
+    def _relayout(self) -> None:
+        self.delegate.clear_cache()
+        self.scheduleDelayedItemsLayout()
+        self.fit_height()
+
     def resizeEvent(self, event):  # noqa: N802
-        if self.viewport().width() != self._width:
-            self._width = self.viewport().width()
-            self.delegate.clear_cache()
-            self.scheduleDelayedItemsLayout()
+        width = self.viewport().width()
+        if width != self._width:
+            first = self._width == 0
+            self._width = width
+            if first:
+                self._relayout()
+            else:
+                self._relayout_timer.start()
         super().resizeEvent(event)
         self.fit_height()
 
@@ -270,7 +342,8 @@ class HistoryPanel(QFrame):
         empty = QWidget()
         e_lay = QVBoxLayout(empty)
         e_lay.setContentsMargins(14, 10, 14, 10)
-        e_lay.addWidget(W.label(HISTORY_EMPTY_TEXT, "secondary-muted"))
+        self.empty_label = W.label(HISTORY_EMPTY_TEXT, "secondary-muted")
+        e_lay.addWidget(self.empty_label)
         self.empty_box = empty
         root.addWidget(empty)
         self._update_empty()
@@ -320,7 +393,7 @@ class HistoryPanel(QFrame):
 
     def _refilter(self, *_args) -> None:
         shown = [entry for entry in self._all if self._matches(entry)]
-        self.view.delegate.clear_cache()
+        self.view.delegate.forget()
         self.view.model_.set_entries(self._limited(shown))
         self._update_empty()
         self.view.scroll_to_end()

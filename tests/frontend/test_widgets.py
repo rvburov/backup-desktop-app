@@ -245,6 +245,18 @@ def test_segmented(host):
     assert seg.value() == "daily" and got[-1] == "daily"
 
 
+def test_segmented_shares_free_space_like_flex_auto(host):
+    seg = show_in(host, W.Segmented([("daily", "Ежедневно"), ("weekly", "Еженедельно"),
+                                     ("monthly", "Ежемесячно")], "daily"), width=420)
+    pump(host)
+    hints = [seg.button(k).sizeHint().width() for k in seg.keys()]
+    widths = [seg.button(k).width() for k in seg.keys()]
+    extras = [w - h for w, h in zip(widths, hints)]
+    assert max(extras) - min(extras) <= 1 and min(extras) > 0     # лишнее место — поровну, а не равные сегменты
+    assert widths[1] > widths[0]                                   # «Еженедельно» шире «Ежедневно»
+    assert seg.button("monthly").geometry().right() == seg.width() - 3
+
+
 def test_segmented_elides_in_narrow_column(host):
     seg = show_in(host, W.Segmented([("daily", "Ежедневно"), ("weekly", "Еженедельно"),
                                      ("monthly", "Ежемесячно")], "daily"), width=282)
@@ -470,7 +482,9 @@ def test_sidebar_tab_list_selection_and_filter(host):
     assert tabs.proxy.index(0, 0).data(Qt.ToolTipRole) == "Документы — Каждый день · 09:00"
     assert tabs.entry("c").sub_color is None
     assert tabs.proxy.index(2, 0).data(W.ROLE_SUB_COLOR) == C.WARN
-    assert rect.height() == W.TabDelegate.ROW_HEIGHT
+    # строки дробные, как в макете (48.3 + 2): 51, 50, 50, 51 …
+    assert rect.height() == W.TabDelegate.row_height(0) == 51
+    assert [W.TabDelegate.row_top(i) for i in range(5)] == [0, 51, 101, 151, 202]
 
     tabs.set_query("  ФО ")
     assert tabs.visible_uids() == ["b"] and tabs.visible_count() == 1
@@ -481,6 +495,14 @@ def test_sidebar_tab_list_selection_and_filter(host):
     tabs.grab()
     tabs.set_query("")
     assert tabs.visible_count() == 3
+    # переименованная выбранная вкладка, переставшая подходить под поиск, остается выбранной и без сигнала
+    tabs.set_query("док")
+    assert tabs.visible_uids() == ["a"]
+    assert tabs.update_entry(W.TabEntry("a", "Архив", "Каждый день · 09:00", W.STATUS_ON))
+    assert tabs.current_uid() == "a" and got == ["c", "a"] and tabs.visible_count() == 0
+    assert tabs.update_entries([W.TabEntry("a", "Документы", "x"), W.TabEntry("zz", "нет")]) == 1
+    assert tabs.visible_uids() == ["a"] and tabs.selectionModel().isSelected(tabs.proxy.index(0, 0))
+    tabs.set_query("")
     assert tabs.selectionModel().isSelected(tabs.proxy.index(0, 0)) and got == ["c", "a"]
 
     tabs.set_current(None)
@@ -663,6 +685,58 @@ def test_title_edit(host):
     title.set_text("ab")
     assert title.chars() == 6
     title.grab()
+
+
+def test_title_edit_width_and_focus_halo(host):
+    title = show_in(host, W.TitleEdit("Документы"))
+    other = QLineEdit()
+    host.layout().addWidget(other)
+    QApplication.setActiveWindow(host)
+    other.setFocus()
+    pump()
+    fm = title.line_edit.fontMetrics()
+    # как <input size=11>: 11 средних знаков + (наибольшая − средняя) + рамка и поля (1 + 7 с каждой стороны)
+    extra = W.size_attribute_extra(title.line_edit.font())
+    assert 0 < extra < fm.height()
+    assert title.line_edit.width() == fm.averageCharWidth() * 11 + extra + 16
+    assert not title.halo.isVisible()
+    title.line_edit.setFocus()
+    pump()
+    halo = title.halo
+    assert halo.isVisible()
+    field = title.line_edit.rect().translated(title.line_edit.mapTo(halo.parentWidget(), QPoint(0, 0)))
+    assert halo.geometry() == field.adjusted(-3, -3, 3, 3)
+    image = halo.grab().toImage()
+    assert image.pixelColor(1, halo.height() // 2).alpha() > 0      # обводка слева от поля
+    title.line_edit.clearFocus()
+    pump()
+    assert not halo.isVisible()
+
+
+def test_textless_checkboxes_leave_gap_to_layout(host):
+    from backup_app.frontend.history_panel import FilterCheck
+    option = show_in(host, W.OptionCheck("Копировать только содержимое папок", "подсказка"))
+    check = show_in(host, FilterCheck())
+    check.setText("Только «Документы»")
+    pump()
+    assert option.checkbox.width() == 15                            # без места под текст флажка
+    assert option.text_label.x() == option.checkbox.geometry().right() + 1 + 9
+    assert check.checkbox.width() == 13 and check.checkbox.height() == 13   # флажок браузера 13×13
+    assert check.text_label.x() == check.checkbox.geometry().right() + 1 + 6
+
+
+def test_fractional_font_widths_follow_the_mockup(host):
+    from PyQt5.QtGui import QFontMetricsF
+    small = show_in(host, W.Button("Открыть подробный журнал", "ghost", small=True))
+    heading = show_in(host, W.label("Настройки вкладки", "h2"))
+    pump()
+    from PyQt5.QtWidgets import QPushButton
+    assert theme.font_px(small.font()) == pytest.approx(12.5)
+    delta = W.exact_width_delta(small.font(), small.text())   # Qt5 рисовал бы 13px: текст на 4 % шире
+    assert delta >= 4
+    assert small.sizeHint().width() == QPushButton.sizeHint(small).width() - delta
+    text_w = QFontMetricsF(theme.exact(heading.font())).horizontalAdvance(heading.text())
+    assert heading.sizeHint().width() <= text_w + 2
 
 
 def test_flow_layout_wraps(themed):

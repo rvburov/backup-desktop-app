@@ -373,6 +373,9 @@ QPushButton:hover, QToolButton:hover {{ background: {C.HOVER}; border-color: {C.
 QPushButton:pressed, QToolButton:pressed {{ background: {C.GHOST_HOVER}; }}
 QPushButton[kbfocus="true"], QToolButton[kbfocus="true"] {{ border-color: {C.ACCENT}; }}
 QPushButton:disabled, QToolButton:disabled {{ color: {dis_text}; background: {C.CARD}; border-color: {dis_border}; }}
+/* кнопка на боковой панели («Копировать все вкладки»): opacity .45 поверх фона панели, а не карточки */
+QPushButton[surface="side"]:disabled {{ color: {faded(C.TEXT, C.SIDE)}; background: {faded(C.CARD, C.SIDE)};
+    border-color: {faded(C.INPUT, C.SIDE)}; }}
 QPushButton[small="true"], QToolButton[small="true"] {{ {_fs(12.5)} padding: 0 9px;
     min-height: {BUTTON_HEIGHT_SMALL - 2}px; }}
 QPushButton[iconOnly="true"], QToolButton[iconOnly="true"] {{ padding: 0; }}
@@ -456,7 +459,7 @@ QLineEdit[mono="true"] {{ {mono} {_fs(12)} }}
 QLineEdit[small="true"] {{ {_fs(12.5)} min-height: {FIELD_HEIGHT_SMALL - 2}px;
     max-height: {FIELD_HEIGHT_SMALL - 2}px; }}
 QLineEdit[kind="title"] {{ {semi} {_fs(18)} background: transparent; border: 1px solid transparent;
-    padding: 2px 6px; min-height: 27px; max-height: 32px; }}
+    padding: 2px 5px; min-height: 27px; max-height: 32px; }}
 QLineEdit[kind="title"]:hover {{ background: {C.CARD}; border-color: {C.INPUT}; }}
 QLineEdit[kind="title"]:focus {{ background: {C.CARD}; border-color: {C.ACCENT}; }}
 /* у счетчиков нет стрелок, как у полей макета: значение вводится с клавиатуры, стрелками или колесом */
@@ -465,7 +468,11 @@ QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ width: 0; border: 
 /* ---------- флажки ---------- */
 QCheckBox {{ spacing: 9px; background: transparent; color: {C.TEXT}; }}
 QCheckBox:disabled {{ color: {dis_text}; }}
-QCheckBox[kind="filter"] {{ {_fs(12.5)} color: {C.TEXT2}; spacing: 6px; }}
+/* флажки без своего текста (подпись — отдельная надпись рядом): зазор задает раскладка, не spacing */
+QWidget[kind="option"] QCheckBox {{ spacing: 0; }}
+/* фильтр истории: стандартный флажок браузера 13×13 (в макете без размеров) */
+QCheckBox[kind="filter"] {{ {_fs(12.5)} color: {C.TEXT2}; spacing: 0; }}
+QCheckBox[kind="filter"]::indicator {{ width: 13px; height: 13px; }}
 QRadioButton {{ spacing: 8px; background: transparent; }}
 
 /* ---------- полосы прокрутки: тонкие, как в боковой панели макета ---------- */
@@ -598,6 +605,19 @@ class AppStyle(QProxyStyle):
         if hint == QStyle.SH_ToolTip_WakeUpDelay:
             return 500
         return super().styleHint(hint, option, widget, data)
+
+    def drawItemText(self, painter, rect, flags, palette, enabled, text, role=QPalette.NoRole):  # noqa: N802
+        # надписи и кнопки с дробным размером из QSS (12.5px, 13.5px): Qt5 рисует их целым 13/14px, и текст
+        # выходит шире макета; рисуем шрифтом с шириной как у дробного размера (см. exact)
+        f = painter.font()
+        e = exact(f)
+        if e is f:
+            super().drawItemText(painter, rect, flags, palette, enabled, text, role)
+            return
+        painter.save()
+        painter.setFont(e)
+        super().drawItemText(painter, rect, flags, palette, enabled, text, role)
+        painter.restore()
 
     def drawPrimitive(self, element, option, painter, widget=None):
         if element == QStyle.PE_IndicatorCheckBox:

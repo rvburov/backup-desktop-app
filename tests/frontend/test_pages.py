@@ -106,6 +106,24 @@ def test_tab_page_shows_problem_paths(themed):
     page.deleteLater()
 
 
+def test_source_list_scrolls_only_when_rows_do_not_fit(themed):
+    from backup_app.frontend.tab_page import SourceDelegate, SourceList
+    view = SourceList()
+    view.resize(600, 300)
+    view.show()
+    for count, height in ((1, 47), (2, 93), (3, 140), (4, 186), (5, 188), (8, 188)):
+        view.set_sources([("folder", f"C:/Папка {i}", "") for i in range(count)])
+        QCoreApplication.processEvents()
+        bar = view.verticalScrollBar()
+        assert view.height() == height                          # строки макета по 46.6 px, не больше 188
+        assert bar.isVisible() == (count > 4), count            # полоса — только когда строки не помещаются
+        rows = [view.visualRect(view.model_.index(i, 0)) for i in range(min(count, 4))]
+        assert [r.top() - rows[0].top() for r in rows] == [SourceDelegate.rows_height(i) for i in range(len(rows))]
+        if count <= 4:
+            assert bar.maximum() == 0 and rows[-1].bottom() == height - 1
+    view.deleteLater()
+
+
 def test_split_icon():
     assert split_icon("✓ Успешно") == ("✓", "Успешно")
     assert split_icon("⚠ Пропущено") == ("⚠", "Пропущено")
@@ -122,6 +140,43 @@ def test_history_panel_shows_entries_newest_last(themed):
                                                "05.10.2026 09:02  ✓ Успешно скопировано 3 файла",
                                                " " * 20 + "x"]
     assert panel.view.height() <= 150
+    panel.deleteLater()
+
+
+def test_history_rows_draw_their_own_entry_after_trim(themed, monkeypatch):
+    # кэш раскладок не должен отдавать строке текст удаленной записи (раньше ключом был id(entry))
+    from backup_app.frontend import history_panel
+    monkeypatch.setattr(history_panel, "HISTORY_VIEW_LIMIT", 5)
+    panel = HistoryPanel()
+    panel.resize(900, 300)
+    for i in range(120):
+        details = tuple(f"деталь {k}" for k in range(i % 3))
+        panel.add_entry(HistoryEntry(datetime(2026, 10, 5, 9, 0), f"✓ запись {i} " + "текст " * (i % 7), details))
+        entry = panel.view.model_.entries[-1]
+        _icon, head, _h, parts, _height = panel.view.delegate._parts(entry, 900)
+        assert head.text() == entry.text[2:] and len(parts) == len(entry.details)
+    panel.deleteLater()
+
+
+def test_history_rows_follow_width_after_resize(themed):
+    from PyQt5.QtTest import QTest
+    from backup_app.frontend import history_panel
+    panel = HistoryPanel()
+    long_text = "✓ " + "очень длинная запись истории " * 8
+    panel.set_entries([HistoryEntry(datetime(2026, 10, 5, 9, 0), "Короткая"),
+                       HistoryEntry(datetime(2026, 10, 5, 9, 1), long_text)])
+    panel.resize(1400, 300)
+    panel.show()
+    QTest.qWait(history_panel.RELAYOUT_MS + 80)
+    view = panel.view
+    one_line = view.visualRect(view.model_.index(1, 0)).height()
+    panel.resize(500, 300)
+    QTest.qWait(history_panel.RELAYOUT_MS + 80)
+    rect = view.visualRect(view.model_.index(1, 0))
+    assert rect.height() > one_line            # длинная запись перенеслась
+    assert rect.width() == view.viewport().width()
+    assert view.visualRect(view.model_.index(0, 0)).height() == view.delegate.row_height(
+        view.model_.entries[0], rect.width())
     panel.deleteLater()
 
 

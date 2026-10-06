@@ -13,6 +13,19 @@ from .constants import APP_TITLE, NEXT_RUN_STOPPED
 from .theme import C
 
 
+# Windows хранит подсказку значка в NOTIFYICONDATA.szTip: 128 знаков с завершающим нулем. Длиннее —
+# обрезается молча, поэтому имя вкладки в конце подсказки сокращаем сами, с «…».
+TOOLTIP_LIMIT = 127
+
+
+def tooltip_text(text: str) -> str:
+    """«Резервное копирование файлов\n<текст>», при необходимости обрезанное с «…» в конце."""
+    tip = f"{APP_TITLE}\n{text}"
+    if len(tip) > TOOLTIP_LIMIT:
+        tip = tip[:TOOLTIP_LIMIT - 1].rstrip() + "…"
+    return tip
+
+
 class TrayIcon(QSystemTrayIcon):
     show_requested = pyqtSignal()
     backup_requested = pyqtSignal()   # «Копировать все вкладки»
@@ -35,7 +48,7 @@ class TrayIcon(QSystemTrayIcon):
         self.quit_action.triggered.connect(self.quit_requested.emit)
 
         self.setContextMenu(self._menu)
-        self.setToolTip(f"{APP_TITLE}\n{NEXT_RUN_STOPPED}")
+        self.setToolTip(tooltip_text(NEXT_RUN_STOPPED))
         self.activated.connect(self._on_activated)
 
     @staticmethod
@@ -54,8 +67,9 @@ class TrayIcon(QSystemTrayIcon):
             self.show_requested.emit()
 
     def set_next_backup(self, text: str) -> None:
+        """Ближайшее копирование: полный текст в меню, в подсказке — не длиннее TOOLTIP_LIMIT знаков."""
         self.next_action.setText(text)
-        self.setToolTip(f"{APP_TITLE}\n{text}")
+        self.setToolTip(tooltip_text(text))
 
     def set_backup_enabled(self, enabled: bool) -> None:
         self.backup_action.setEnabled(enabled)

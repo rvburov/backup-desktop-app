@@ -9,6 +9,11 @@
 | `backup_app/frontend/icons.py` | все иконки макета (SVG 24×24) → `pix()` / `icon()` / `paint()` |
 | `backup_app/frontend/widgets.py` | готовые элементы: кнопки, переключатели, карточки, список вкладок, тост, модальное окно |
 
+Из этих элементов собраны модули окна: `main_window.py` (боковая панель, разделитель, страницы, строка
+состояния, тост, события сервиса, трей), `tab_page.py` (страница вкладки: название, «Что копировать», «Папка
+сохранения», «Настройки вкладки»), `settings_page.py` (страница «Настройки»), `history_panel.py` (история
+копирования), `tray.py` (значок и меню трея).
+
 Запуск оформления — в `app.py`: `theme.enable_hidpi()` до создания `QApplication`, затем `theme.apply(app)`
 (стиль Fusion, шрифты из `fonts/`, светлая палитра, QSS).
 
@@ -53,7 +58,14 @@
   с `font-weight` 456/504: Qt5 делит вес из QSS на 8, и только так выходят Medium (57) и DemiBold (63), а не
   DemiBold/Bold — пишите стили только через эти функции.
 * Дробные размеры (12.5px, 13.5px) QSS в px не понимает: `theme.build_stylesheet()` переводит их в pt
-  с учетом DPI экрана, `theme.font()` делает то же самое.
+  с учетом DPI экрана, `theme.font()` делает то же самое. Но Qt5 все равно рисует такой шрифт целым размером
+  (12.5 → 13px, 13.5 → 14px), и текст выходит на 4 % шире макета. Поэтому:
+  * в коде рисования берите `theme.font_exact(role, px)`, а для готового шрифта — `theme.exact(font)`: меньший
+    целый размер, растянутый по ширине (`PercentageSpacing`) до дробного; целые размеры не меняются;
+  * текст, который рисует стиль (`QLabel`, `QPushButton`), `AppStyle.drawItemText` сам рисует через `exact()`;
+  * размеры по такому тексту уже исправлены у `label()`, `Button`, `ElidedLabel`, `WrapAnywhereLabel`
+    (`widgets.exact_width_delta()`). Своему виджету с дробным шрифтом считайте ширину через
+    `QFontMetrics(theme.exact(self.font()))`, иначе соседние элементы съедут.
 * Файлы — `fonts/` (лицензия SIL OFL 1.1: `OFL-GolosText.txt`, `OFL-JetBrainsMono.txt`), в сборку их добавляет
   `BackupApp.spec`.
 
@@ -70,18 +82,19 @@
 | `QLabel[kind]` | `h1`, `h2`, `h3`, `medium`, `semibold`, `muted`, `muted-sm`, `secondary`, `faint`, `caps`, `count`, `warn`, `danger`, `ok`, `status` (+`tone`), `mono`, `mono-body`, `mono-time`, `badge`, `pill`, `note`, `note-sm`, `empty` |
 | `QFrame[kind]` | `card`, `card-footer`, `divider`, `vdivider`, `side-divider`, `sidebar`, `panel` (белая полоса с линией сверху), `row` (строка списка с линией и подсветкой), `row-plain`, `notice`, `note`, `stepper` |
 | `QLineEdit` | `[readOnly="true"]` — серый фон, `[mono="true"]` — моноширинный 12px, `[small="true"]` — поиск 30px (`FIELD_HEIGHT_SMALL`) |
-| `QCheckBox[kind="filter"]` | 12.5px `TEXT2` (фильтр истории) |
+| `QCheckBox[kind="filter"]` | 12.5px `TEXT2`, флажок 13×13 (фильтр истории); подпись — отдельная надпись, зазор 6px задает раскладка |
+| `QPushButton[surface="side"]` | кнопка на боковой панели: недоступная — `opacity .45` поверх `SIDE`, а не `CARD` (`Button(surface="side")`) |
 | `QWidget[kind="page"]` | фон окна (нужен `WA_StyledBackground`) |
 
 ## Элементы (`widgets.py`)
 
 | Элемент | Когда |
 |---|---|
-| `Button(text, variant, small, icon, icon_only, tooltip, elide, checkable)` | любая кнопка; иконка окрашивается в цвет текста, зазор 6px (у `nav` 10px) |
+| `Button(text, variant, small, icon, icon_only, tooltip, elide, checkable, surface)` | любая кнопка; иконка окрашивается в цвет текста, зазор 6px (у `nav` 10px) |
 | `ToggleSwitch` | включение функции (расписание, настройки приложения); `toggled(bool)`, `set_checked_silent()` |
 | `SwitchRow(title, hint, checked, title_kind, top_border)` | строка «заголовок + подсказка … переключатель» |
 | `OptionCheck(text, hint, checked)` | параметр копирования: флажок + полужирная подпись + подсказка, щелчок по строке |
-| `Segmented(options, value)` | выбор одного из 2–4 вариантов (периодичность); `changed(str)`; в узкой колонке подписи с «…» |
+| `Segmented(options, value)` | выбор одного из 2–4 вариантов (периодичность); `changed(str)`; ширина сегмента — по тексту плюс равная доля свободного места (`flex: 1 1 auto`), в узкой колонке подписи с «…» |
 | `DayChips(value)` | день недели; `changed(int)`, переносится в узком окне |
 | `MonthdayStepper(value)` | число месяца 1…31 по кругу; `changed(int)`; стрелки и +/− на кнопках — шаг |
 | `Card(title, icon_name, header_divider, header_margins, body_margins)` | любой раздел; `add_header_widget()`, `body_layout`, `add_footer()` |
@@ -93,18 +106,25 @@
 | `SidebarTabList` + `TabEntry` | список вкладок со статусом, фильтром, тенями у краев |
 | `Toast(parent)` | короткое сообщение в окне (5 с) вместо `QMessageBox`: отказ расписания, «сброс выполнен» |
 | `OverlayDialog` / `confirm()` | подтверждение удаления и сброса внутри окна; после ответа фокус возвращается туда, где был |
-| `TitleEdit` | название вкладки, редактируемое на месте; `editing_finished` — один раз (Enter, Esc или уход фокуса), только если имя изменилось (Esc — всегда) |
+| `TitleEdit` | название вкладки, редактируемое на месте; `editing_finished` — один раз (Enter, Esc или уход фокуса), только если имя изменилось (Esc — всегда). Ширина — как у `<input size=N>` макета, N = длина + 2 (от 6 до 48 знаков): N × средняя ширина знака + (наибольшая − средняя, `size_attribute_extra()`); длиннее 48 знаков — «…» без фокуса. В фокусе — мягкая обводка 3px (`FocusHalo`) |
+| `FocusHalo(field)` | обводка `box-shadow: 0 0 0 3px` вокруг поля в фокусе: QSS тени не рисует, ее рисует отдельный прозрачный виджет над ближайшим предком, куда она помещается |
 | `StatusLine(tone, text)` | строка под названием вкладки: `run` / `warn` / `ok` / `off` |
+| `FlexRow(parent, hgap, vgap, align)` | строка с переносом, как `display:flex; flex-wrap:wrap` макета: `add(widget, basis, grow, shrink, min_width)` — `flex: grow shrink basis` и `min-width` (по умолчанию basis — ширина по содержимому), `add_spacer(grow)` — растяжка (`margin-left:auto`). На ней держатся все строки, которые переносятся в узком окне (шапки карточек, колонки «Настройки вкладки», строка состояния, шапка истории) |
 | `FlowLayout`, `label()`, `hline()`, `vline()`, `IconLabel`, `CapsLabel`, `style_menu()` | мелкие помощники |
 
 ## Отступы и размеры
 
 * Рабочая область: поля 16px, между карточками 12px. Боковая панель: сверху 12, снизу 10, список — слева 10,
-  справа 6; строка вкладки 48px + 2px зазор.
+  справа 6; строка вкладки 48.3px + 2px зазор. Дробные высоты строк макета (вкладка 48.3, источник 46.6)
+  делегаты повторяют строками разной целой высоты (`TabDelegate.row_top()`, `SourceDelegate.rows_height()`):
+  края строк совпадают с макетом и не «уплывают» вниз по списку.
 * Карточка: рамка 1px, скругление 8. Шапка — поля 9px 12px (на странице «Настройки» 9px 14px), иконка 16px
   `TEXT2`, зазор 8. Содержимое — 12px по бокам; колонки «Настройки вкладки» — 12px 14px, линия между ними.
 * `TitleEdit` и `OptionCheck` в макете выступают влево (margin-left: -8px), чтобы текст стоял по линии
-  соседних строк: уменьшайте отступ раскладки на `TitleEdit.TEXT_INSET` (9) и `OptionCheck.INSET` (8).
+  соседних строк: уменьшайте отступ раскладки на `TitleEdit.TEXT_INSET` (8) и `OptionCheck.INSET` (8).
+* Флажок без своего текста (`OptionCheck`, фильтр истории) — с `spacing: 0`: иначе Qt оставляет справа
+  от квадрата пустое место под текст, и подпись уезжает.
+* Список «Что копировать» — по высоте строк, не больше 188px; полоса прокрутки — только когда строки не помещаются.
 * Строка списка: поля 6px 8px 6px 12px, иконка 18px, зазор 10, линия `DIVIDER` сверху.
 * Высоты: кнопки и поля 32, малые кнопки 28, поле поиска 30, сегменты 28 в подложке 32, дни 34×28, переключатель 38×22,
   полоска хода 6, строка состояния от 40.

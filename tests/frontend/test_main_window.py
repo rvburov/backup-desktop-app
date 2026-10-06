@@ -1,16 +1,17 @@
 """Окно поверх настоящего бэкенда: команды уходят в сервис, события приходят обратно."""
+import dataclasses
 import os
 import time
 from datetime import datetime, timedelta
 
 import pytest
-from PyQt5.QtCore import QCoreApplication, QEvent, QTime
+from PyQt5.QtCore import QCoreApplication, QEvent, Qt, QTime
 
 from backup_app.backend import (NO_DESTINATION, NO_SOURCES, NO_TABS_WITH_DATA, PERIOD_MONTHLY, PERIOD_WEEKLY,
                                 STATUS_OK, STATUS_PARTIAL, AppConfig, AppProblem, BackupFinished, BackupProgress,
                                 BackupResult, BackupService, BackupStarted, ConfigChanged, HistoryAdded, HistoryEntry,
                                 SettingsStore, setup_file_logging)
-from backup_app.backend import autostart
+from backup_app.backend import autostart, backup_folder_name
 from backup_app.backend import copier as copier_module
 from backup_app.backend.safety import system_paths
 from backup_app.frontend import constants as K
@@ -173,6 +174,7 @@ def test_fresh_start_has_empty_history_and_full_journal(env):
     assert window.tray is not None
     assert history_text(window) == ""
     assert window.history_panel.empty_box.isVisibleTo(window.history_panel)
+    assert window.history_panel.empty_label.text() == K.HISTORY_EMPTY_TEXT == "Копирований пока не было"
     assert "Файл настроек" in env.log_file()
     assert not window.service.schedule_active
     assert not window.page.schedule_switch.isChecked()
@@ -195,8 +197,13 @@ def test_active_tab_is_restored(env):
     assert window.page.title == "Вторая"
     assert window.tab_list.current_uid() == window.current_uid()
     window.select_tab(window.tabs()[2].uid)
-    assert env.stored().active_tab == 2
     assert window.page.title == "Третья"
+    # номер вкладки сохраняется отложенно (или сразу перед командой, уходом в трей, выходом)
+    assert env.stored().active_tab == 1
+    assert wait_for(env.app, lambda: env.stored().active_tab == 2, timeout=3)
+    window.select_tab(window.tabs()[0].uid)
+    window.flush_settings()
+    assert env.stored().active_tab == 0
 
 
 # ------------------------------------------------------------ копирование
@@ -296,11 +303,14 @@ def test_copy_all_tabs_runs_every_tab_with_data(env, tmp_path, monkeypatch):
     window.page.rename("Вторая")
     fill_tab(window, [second], [], dst)
     window.add_new_tab()  # пустая вкладка молча пропускается
+    started = datetime.now()
     window.sidebar.copy_all_button.click()
     assert window.status_bar.run_label.text() == K.PREPARING_TEXT
     assert wait_backup(env, window)
     assert "Ручное копирование: Первая, Вторая" in history_text(window)
-    assert sorted(list_rel(dst)) == ["one/a.txt", "two/b.txt"] or len(list_rel(dst)) == 2
+    # у каждой вкладки свои параметры по умолчанию: папка с датой, внутри — папки целиком
+    days = {backup_folder_name(started), backup_folder_name(datetime.now())}
+    assert any(list_rel(dst) == [f"{day}/one/a.txt", f"{day}/two/b.txt"] for day in days), list_rel(dst)
     assert env.toasts == []
 
 
@@ -597,14 +607,77 @@ def test_search_filters_tabs_and_shows_count(env):
     assert window.sidebar.search.text() == "" and window.sidebar.count_label.text() == "8"
 
 
+def test_rename_under_search_keeps_the_current_tab(env):
+    from PyQt5.QtTest import QTest
+    window = env.window(tabs_ini(*["Без названия"] * 8), show=True)
+    uid = window.tabs()[3].uid
+    window.select_tab(uid)
+    window.sidebar.search.setText("Без")
+    edit = window.page.title_edit.line_edit
+    edit.setFocus()
+    edit.selectAll()
+    QTest.keyClicks(edit, "Photos")   # после первой буквы вкладка перестает подходить под поиск
+    assert window.current_uid() == uid and window.tab_list.current_uid() == uid
+    assert window.tab_list.visible_count() == 7
+    assert window.sidebar.count_label.text() == "7 из 8"
+    QTest.keyClick(edit, Qt.Key_Return)
+    assert [t.title for t in window.tabs()].count("Photos") == 1 and window.tab(uid).title == "Photos"
+    assert [t.title for t in env.stored().tabs] == ["Без названия"] * 3 + ["Photos"] + ["Без названия"] * 4
+    assert window.sidebar.count_label.text() == "7 из 8"
+
+
+def test_rename_updates_status_pill_and_tray(env, tmp_path):
+    window = env.window()
+    fill_tab(window, [tmp_path], [], tmp_path)
+    assert window.set_schedule(True)
+    assert window.status_bar.pill.text().endswith(" · Без названия")
+    edit = window.page.title_edit.line_edit
+    edit.setText("Фото")
+    edit.textEdited.emit("Фото")          # пока печатается
+    assert window.status_bar.pill.text().endswith(" · Фото")
+    assert window.tray.next_action.text().endswith(" · Фото")
+    assert window.tray.toolTip().endswith(" · Фото")
+    window.page.rename("Архив")            # Enter
+    assert window.status_bar.pill.text().endswith(" · Архив")
+    assert window.tray.next_action.text().endswith(" · Архив")
+
+
+def test_tray_tooltip_fits_windows_limit(env):
+    window = env.window()
+    name = "Очень длинное название вкладки " * 4
+    text = f"Следующее копирование: 07.10.2026 09:00 · {name}"
+    window.tray.set_next_backup(text)
+    tip = window.tray.toolTip()
+    assert len(tip) <= 127 and tip.endswith("…")
+    assert tip.startswith("Резервное копирование файлов\nСледующее копирование: 07.10.2026 09:00 · Очень")
+    assert window.tray.next_action.text() == text   # в меню — полностью
+    window.tray.set_next_backup("Следующее копирование: остановлено")
+    assert window.tray.toolTip() == "Резервное копирование файлов\nСледующее копирование: остановлено"
+
+
+def test_reset_clears_tab_search(env):
+    window = env.window(tabs_ini(*[f"Вкладка {i}" for i in range(8)]))
+    window.sidebar.search.setText("zz")
+    assert window.tab_list.visible_count() == 0
+    window.perform_reset()
+    assert window.sidebar.search.text() == "" and not window.sidebar.search_box.isVisibleTo(window.sidebar)
+    assert window.tab_list.visible_count() == 1 and window.sidebar.count_label.text() == "1"
+
+
 def test_switching_between_many_tabs_is_fast(env):
     window = env.window(tabs_ini(*[f"Вкладка {i}" for i in range(500)]))
     uids = [tab.uid for tab in window.tabs()]
+    saves = []
+    real_update = window.service.update_config
+    window.service.update_config = lambda config: (saves.append(config.active_tab), real_update(config))
     started = time.monotonic()
     for uid in uids[:40]:
         window.select_tab(uid)
     assert time.monotonic() - started < 8
     assert window.page.title == "Вкладка 39"
+    assert saves == []   # файл настроек не переписывается на каждый щелчок
+    window.flush_settings()
+    assert saves == [39] and env.stored().active_tab == 39
 
 
 def test_config_changed_keeps_current_tab(env):
@@ -654,14 +727,17 @@ def test_sources_list_and_preview(env, tree):
     page = fill_tab(window, [src / "docs"], [src / "single.txt"], dst)
     assert page.summary_label.text() == "1 папка, 1 файл"
     assert [row[0] for row in page.source_list.rows()] == ["folder", "file"]
-    path = page.preview_path.text()
-    assert path.endswith("/docs/Отчет.docx") and "Резервное копирование " in path
+    # на Windows путь из tmp_path записан через «\\», и пример копии повторяет разделитель назначения
+    def preview():
+        return page.preview_path.text().replace("\\", "/")
+
+    assert preview().endswith("/docs/Отчет.docx") and "Резервное копирование " in preview()
     page.contents_option.checkbox.click()
-    assert page.preview_path.text().endswith(" " + datetime.now().strftime("%d-%m-%Y") + "/Отчет.docx")
+    assert preview().endswith(" " + datetime.now().strftime("%d-%m-%Y") + "/Отчет.docx")
     assert env.stored().tabs[0].copy_folder_contents is True
     page.remove_path(str(src / "docs"))
     assert page.summary_label.text() == "1 файл"
-    assert page.preview_path.text().endswith("/single.txt")
+    assert preview().endswith("/single.txt")
     page.clear_button.click()
     assert page.summary_label.text() == "пока ничего не выбрано"
     assert page.empty_box.isVisibleTo(page) and not page.clear_button.isEnabled()
@@ -711,12 +787,15 @@ def test_perform_reset(env, tree):
     fill_tab(window, [src / "docs"], [], dst)
     window.set_schedule(True)
     window.add_new_tab()
+    window.settings_page.set_checked("show_notifications", False)
+    window.settings_page.max_size_spin.setValue(7)
     window.perform_reset()
     stored, default = env.stored(), AppConfig()
-    assert len(stored.tabs) == 1 and stored.tabs[0].title == default.tabs[0].title
+    # все настройки — как у новой программы (кроме случайного идентификатора вкладки)
+    assert dataclasses.replace(stored, tabs=[]) == dataclasses.replace(default, tabs=[])
+    assert len(stored.tabs) == 1
+    assert dataclasses.replace(stored.tabs[0], uid="x") == dataclasses.replace(default.tabs[0], uid="x")
     assert stored.tabs[0].keep_history and stored.tabs[0].create_backup_folder
-    assert not stored.tabs[0].copy_folder_contents and not stored.tabs[0].folders
-    assert stored.max_file_size_gb == default.max_file_size_gb
     assert len(window.tabs()) == 1 and not window.service.schedule_active
     assert not window.page.schedule_switch.isChecked()
     assert "Расписание остановлено: настройки сброшены" in history_text(window)
@@ -801,7 +880,10 @@ def test_status_pill_shows_nearest_schedule(env, tmp_path):
     folder = ini_path(tmp_path)
     window = env.window(tabs_ini("A", "B"))
     a, b = window.tabs()
-    for tab, time_text in ((a, "23:58"), (b, "23:59")):
+    # время — от текущего (через 2 и 3 часа), чтобы порядок не зависел от того, когда идет тест
+    now = datetime.now()
+    times = [(now + timedelta(hours=hours)).strftime("%H:%M") for hours in (2, 3)]
+    for tab, time_text in zip((a, b), times):
         window.select_tab(tab.uid)
         window.page.add_folder_path(folder)
         window.page.set_destination(folder)

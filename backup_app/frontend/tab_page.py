@@ -141,15 +141,26 @@ def problem_line(path: str, problem: str) -> str:
 class SourceDelegate(QStyledItemDelegate):
     """Строка «Что копировать»: иконка, имя (500) и папка моноширинным или проблема красным, кнопка «×»."""
 
-    ROW_HEIGHT = 47   # 1 линия сверху + 6 + 18 + 15 + 6, как .srow в макете
+    ROW_PITCH = 46.6  # 1 линия сверху + 6 + 18.2 + 15.4 + 6, как .srow в макете
+    ROW_HEIGHT = 47   # самая высокая строка
     BUTTON = 28
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.hover_button_row = -1
 
+    @classmethod
+    def row_height(cls, row: int) -> int:
+        """Высота строки row: 47 или 46 px, чтобы края строк совпали с дробными строками макета."""
+        return cls.rows_height(row + 1) - cls.rows_height(row)
+
+    @classmethod
+    def rows_height(cls, count: int) -> int:
+        """Высота count строк подряд (как в макете, с округлением)."""
+        return int(count * cls.ROW_PITCH + 0.5)
+
     def sizeHint(self, option, index):  # noqa: N802
-        return QSize(max(0, option.rect.width()), self.ROW_HEIGHT)
+        return QSize(max(0, option.rect.width()), self.row_height(index.row()))
 
     def button_rect(self, rect: QRect) -> QRect:
         body = rect.adjusted(0, 1, 0, 0)
@@ -230,7 +241,6 @@ class SourceList(QListView):
         self.delegate = SourceDelegate(self)
         self.setItemDelegate(self.delegate)
         self.setFrameShape(QFrame.NoFrame)
-        self.setUniformItemSizes(True)
         self.setSelectionMode(QAbstractItemView.NoSelection)
         self.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
@@ -252,8 +262,11 @@ class SourceList(QListView):
             item.setData(problem, ROLE_PROBLEM)
             item.setData(path, Qt.AccessibleTextRole)
             self.model_.appendRow(item)
-        # строка в макете 46.6 px (1 + 6 + 18.2 + 15.4 + 6): высота списка — как у суммы строк макета
-        self.setFixedHeight(min(int(self.model_.rowCount() * 46.6 + 0.5), self.MAX_HEIGHT))
+        # высота списка — сумма строк (как у делегата), не больше MAX_HEIGHT: полоса прокрутки — только
+        # когда строки не помещаются (max-height: 188px; overflow-y: auto)
+        total = SourceDelegate.rows_height(self.model_.rowCount())
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded if total > self.MAX_HEIGHT else Qt.ScrollBarAlwaysOff)
+        self.setFixedHeight(min(total, self.MAX_HEIGHT))
 
     def rows(self) -> List[Tuple[str, str, str]]:
         return [(self.model_.item(r).data(ROLE_KIND), self.model_.item(r).data(ROLE_PATH),

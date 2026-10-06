@@ -107,7 +107,7 @@ class Sidebar(QFrame):
         foot.addWidget(W.hline("side-divider"))
         foot.addSpacing(10)
         self.copy_all_button = W.Button("Копировать все вкладки", icon="layers", elide=True,
-                                        tooltip="Копировать все вкладки")
+                                        tooltip="Копировать все вкладки", surface="side")
         foot.addWidget(self.copy_all_button)
         foot.addSpacing(6)
         self.settings_button = W.Button("Настройки", "nav", icon="gear", icon_size=16, elide=True, checkable=True)
@@ -249,10 +249,13 @@ class MainWindow(QMainWindow):
         self._running: Tuple[str, ...] = tuple(service.running_tabs)
         self._run_names: Tuple[str, ...] = tuple(tab_name(t) for t in self._config.tabs if t.uid in self._running)
         self._progress: Optional[Tuple[int, str]] = None
+        self._shown_percent = -1
         self._tab_text = ""
         self._detail = ""
         self._cancelling = False
         self._history_open = True
+        self._tab_map: Dict[str, TabConfig] = {}
+        self._tab_map_key: Tuple[int, int] = (0, -1)
 
         self.setWindowTitle(APP_TITLE)
         icon_path = resource_path("icon.ico")
@@ -260,6 +263,8 @@ class MainWindow(QMainWindow):
         self._init_ui()
         self._init_size()
 
+        # отложенное сохранение (название печатается, выбрана другая вкладка): сохраняется не чаще раза
+        # в TITLE_COMMIT_MS; перед командами, уходом в трей и выходом — сразу (_flush_title)
         self._title_timer = QTimer(self)
         self._title_timer.setSingleShot(True)
         self._title_timer.setInterval(TITLE_COMMIT_MS)
@@ -345,7 +350,17 @@ class MainWindow(QMainWindow):
         return self._config.tabs
 
     def tab(self, uid: Optional[str]) -> Optional[TabConfig]:
-        return self._config.tab(uid) if uid else None
+        if not uid:
+            return None
+        tabs = self._config.tabs
+        if self._tab_map_key != (id(tabs), len(tabs)):
+            # uid → вкладка: при сотнях вкладок поиск перебором на каждое событие копирования слишком дорог
+            self._tab_map = {tab.uid: tab for tab in tabs}
+            self._tab_map_key = (id(tabs), len(tabs))
+        tab = self._tab_map.get(uid)
+        if tab is None or tab.uid != uid:
+            tab = self._config.tab(uid)
+        return tab
 
     def current_tab(self) -> TabConfig:
         return self.tab(self._current_uid) or self._config.tabs[0]
@@ -367,7 +382,7 @@ class MainWindow(QMainWindow):
         tab = self.tab(uid)
         if tab is None:
             return
-        self._flush_title()
+        # набранное название уже в конфигурации окна: его сохранит то же отложенное сохранение
         changed = uid != self._current_uid
         self._current_uid = uid
         self._show_view("tab")
@@ -378,7 +393,9 @@ class MainWindow(QMainWindow):
         self._render_page()
         self.history_panel.set_tab(uid, tab_name(tab))
         if changed:
-            self.save_settings()
+            # номер выбранной вкладки сохраняется отложенно: запись всего файла настроек на каждый щелчок
+            # при сотнях вкладок заметно тормозит переключение
+            self._title_timer.start()
 
     def add_new_tab(self) -> None:
         self._flush_title()
@@ -504,6 +521,10 @@ class MainWindow(QMainWindow):
         if self._title_timer.isActive():
             self.save_settings()
 
+    def flush_settings(self) -> None:
+        """Сохранить сразу то, что ждет отложенного сохранения (название, выбранная вкладка)."""
+        self._flush_title()
+
     def _on_tab_changed(self) -> None:
         self._title_timer.stop()
         self._render_entry(self.current_tab())
@@ -512,14 +533,20 @@ class MainWindow(QMainWindow):
         self.save_settings()
 
     def _on_title_edited(self, name: str) -> None:
-        self._render_entry(self.current_tab())
+        self._render_name()
         self.history_panel.set_tab(self._current_uid, name)
         self._title_timer.start()
 
     def _on_title_committed(self, _title: str) -> None:
-        self._render_entry(self.current_tab())
+        self._render_name()
         self.history_panel.set_tab(self._current_uid, tab_name(self.current_tab()))
         self.save_settings()
+
+    def _render_name(self) -> None:
+        """Имя вкладки изменилось: строка списка, число найденных, ближайшее копирование и трей."""
+        self._render_entry(self.current_tab())
+        self._render_counts()
+        self._render_status()
 
     def toggle_auto_start(self, checked: bool) -> None:
         try:
@@ -536,6 +563,7 @@ class MainWindow(QMainWindow):
 
     def perform_reset(self) -> None:
         self._title_timer.stop()
+        self.sidebar.search.clear()  # как в макете: сброс очищает и поиск по вкладкам
         self.service.reset()
 
     # ================================================================ команды
@@ -617,6 +645,7 @@ class MainWindow(QMainWindow):
         self._running = tuple(event.tab_ids)
         self._run_names = tuple(event.tab_names)
         self._progress = None
+        self._shown_percent = -1
         self._tab_text, self._detail = "", ""
         self._cancelling = False
         self._flash_timer.stop()
@@ -633,10 +662,11 @@ class MainWindow(QMainWindow):
             self._tab_text = text
         elif text:
             self._detail = text
-        for uid in self._running:
-            tab = self.tab(uid)
-            if tab is not None:
-                self._render_entry(tab)
+        # подпись в списке вкладок меняется только с целым процентом: остальные события ее не трогают
+        shown = int(percent)
+        if first or shown != self._shown_percent:
+            self._shown_percent = shown
+            self.tab_list.update_entries(self._entry(tab) for tab in map(self.tab, self._running) if tab is not None)
         self._render_status()
         if first:
             self._render_page()
@@ -722,14 +752,18 @@ class MainWindow(QMainWindow):
                 best = (moment, tab)
         return best
 
-    def next_run_text(self, now: Optional[datetime] = None) -> str:
-        nearest = self._nearest()
+    _NOT_GIVEN = object()
+
+    def next_run_text(self, now: Optional[datetime] = None, nearest=_NOT_GIVEN) -> str:
+        if nearest is self._NOT_GIVEN:
+            nearest = self._nearest()
         if nearest is None:
             return NEXT_RUN_STOPPED
         return NEXT_RUN_PILL.format(when=fmt_when(nearest[0], now or datetime.now()), name=tab_name(nearest[1]))
 
-    def tray_text(self) -> str:
-        nearest = self._nearest()
+    def tray_text(self, nearest=_NOT_GIVEN) -> str:
+        if nearest is self._NOT_GIVEN:
+            nearest = self._nearest()
         if nearest is None:
             return NEXT_RUN_STOPPED
         return NEXT_RUN_PILL.format(when=f"{nearest[0]:%d.%m.%Y %H:%M}", name=tab_name(nearest[1]))
@@ -755,9 +789,10 @@ class MainWindow(QMainWindow):
             bar.show_result(icon, status, tone)
         else:
             bar.show_idle()
-        bar.pill.setText(self.next_run_text())
+        nearest = self._nearest()
+        bar.pill.setText(self.next_run_text(nearest=nearest))
         if self.tray is not None:
-            self.tray.set_next_backup(self.tray_text())
+            self.tray.set_next_backup(self.tray_text(nearest))
 
     def _render_history_button(self) -> None:
         button = self.status_bar.history_button

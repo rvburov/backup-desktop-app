@@ -5,13 +5,15 @@
 """
 import html
 import math
-from typing import Iterable, List, NamedTuple, Optional, Sequence, Tuple
+import struct
+from typing import Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple
 
 from PyQt5.QtCore import (QElapsedTimer, QEasingCurve, QEvent, QEventLoop, QModelIndex, QPoint, QPointF,
                           QPropertyAnimation, QRect, QRectF, QSize, QSortFilterProxyModel, Qt, QTimer,
                           pyqtProperty, pyqtSignal)
-from PyQt5.QtGui import (QColor, QFontMetrics, QFontMetricsF, QIcon, QPainter, QPalette, QPen, QRadialGradient,
-                         QStandardItem, QStandardItemModel, QTextCharFormat, QTextLayout, QTextOption)
+from PyQt5.QtGui import (QColor, QFont, QFontMetrics, QFontMetricsF, QIcon, QPainter, QPainterPath, QPalette, QPen,
+                         QRadialGradient, QRawFont, QStandardItem, QStandardItemModel, QTextCharFormat, QTextLayout,
+                         QTextOption)
 from PyQt5 import sip
 from PyQt5.QtWidgets import (QAbstractButton, QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QFrame,
                              QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QLayout, QLineEdit, QListView,
@@ -46,13 +48,41 @@ def label(text: str = "", kind: Optional[str] = None, wrap: bool = False, parent
 
     Текст всегда обычный (PlainText): имена вкладок и пути не должны разбираться как HTML.
     """
-    w = QLabel(text, parent)
+    w = _Label(text, parent)
     w.setTextFormat(Qt.PlainText)
     if kind:
         w.setProperty("kind", kind)
     if wrap:
         w.setWordWrap(True)
     return w
+
+
+def exact_width_delta(f: QFont, text: str) -> int:
+    """На сколько px текст шрифта f (дробный размер, Qt5 рисует его целым) шире, чем в макете.
+
+    Стиль приложения рисует такой текст шрифтом exact(f) (AppStyle.drawItemText); размеры виджетов
+    Qt считает по округленному шрифту — их уменьшаем на эту разницу.
+    """
+    e = exact(f)
+    if e is f or not text:
+        return 0
+    return max(0, QFontMetrics(f).horizontalAdvance(text) - math.ceil(QFontMetricsF(e).horizontalAdvance(text)))
+
+
+class _Label(QLabel):
+    """QLabel, ширина которого с дробным размером шрифта — как у текста в макете (см. exact_width_delta)."""
+
+    def sizeHint(self):  # noqa: N802
+        hint = super().sizeHint()
+        if not self.wordWrap():
+            hint.setWidth(hint.width() - exact_width_delta(self.font(), self.text()))
+        return hint
+
+    def minimumSizeHint(self):  # noqa: N802
+        hint = super().minimumSizeHint()
+        if not self.wordWrap():
+            hint.setWidth(hint.width() - exact_width_delta(self.font(), self.text()))
+        return hint
 
 
 def hline(kind: str = "divider") -> QFrame:
@@ -565,6 +595,7 @@ class Button(QPushButton):
     small=True — 28px (.btn-sm); icon — имя иконки из icons.py (цвет = цвет текста варианта);
     icon_only=True — квадратная кнопка 32×32 / 28×28; elide=True — текст с «…», если не помещается
     (полный текст — в text() и подсказке). Между иконкой и текстом 6px (у nav — 10px), как в макете.
+    surface — фон под кнопкой (недоступная кнопка полупрозрачна поверх него): "card" или "side".
     Фокус только с клавиатуры (синяя рамка не «залипает» после щелчка мышью).
     """
 
@@ -573,8 +604,11 @@ class Button(QPushButton):
     def __init__(self, text: str = "", variant: Optional[str] = None, small: bool = False,
                  icon: Optional[str] = None, icon_color: Optional[str] = None, icon_size: Optional[int] = None,
                  icon_only: bool = False, tooltip: Optional[str] = None, elide: bool = False,
-                 checkable: bool = False, parent=None):
+                 checkable: bool = False, surface: str = "card", parent=None):
         super().__init__(text, parent)
+        self._surface = surface
+        if surface != "card":
+            self.setProperty("surface", surface)
         self._elide = elide
         self._base_tip = tooltip or ""
         self._icon_name, self._icon_color, self._icon_stroke = None, icon_color, None
@@ -635,7 +669,8 @@ class Button(QPushButton):
             self.setIcon(QIcon())
             return
         base = self._icon_color or _VARIANT_ICON.get(self._variant, C.TEXT)
-        disabled = mix(C.WHITE, C.WIN, 0.45) if self._variant in ("primary", "danger-solid") else faded(base)
+        behind = C.SIDE if self._surface == "side" else C.CARD
+        disabled = mix(C.WHITE, C.WIN, 0.45) if self._variant in ("primary", "danger-solid") else faded(base, behind)
         self.setIcon(icons.icon(name, base, self._icon_size, stroke, disabled_color=disabled))
         self.setIconSize(QSize(self._icon_size, self._icon_size))
         self.updateGeometry()
@@ -661,6 +696,9 @@ class Button(QPushButton):
         hint = super().sizeHint()
         if not self.icon().isNull() and self.text() and not self._icon_only:
             hint.setWidth(hint.width() + self.icon_gap() - 4)
+        if self.text() and not self._icon_only:
+            # 12.5px (.btn-sm, .seg): ширина текста как в макете, а не как у округленных 13px
+            hint.setWidth(hint.width() - exact_width_delta(self.font(), self.text()))
         return hint
 
     def minimumSizeHint(self):  # noqa: N802
@@ -684,7 +722,7 @@ class Button(QPushButton):
         width = rect.width()
         if not self.icon().isNull():
             width -= self.iconSize().width() + self.icon_gap()
-        return self.fontMetrics().elidedText(self.text(), Qt.ElideRight, max(10, width))
+        return QFontMetrics(exact(self.font())).elidedText(self.text(), Qt.ElideRight, max(10, width))
 
     def resizeEvent(self, event):  # noqa: N802
         super().resizeEvent(event)
@@ -713,7 +751,9 @@ class Button(QPushButton):
         painter.drawControl(QStyle.CE_PushButtonBevel, option)
         rect = self._content_rect(option)
         text = self._shown_text(rect)
-        fm = self.fontMetrics()
+        text_font = exact(self.font())
+        painter.setFont(text_font)
+        fm = QFontMetrics(text_font)
         size = self.iconSize()
         total = size.width() + self.icon_gap() + fm.horizontalAdvance(text)
         if self._variant in self.LEFT_ALIGNED:
@@ -812,35 +852,69 @@ class Segmented(QFrame):
     """Сегменты «Ежедневно | Еженедельно | Ежемесячно»: фон #EEF1F5, выбранный — белый с обводкой.
 
     options — [(ключ, подпись), ...]. Сигнал changed(str) — только от пользователя.
-    В узкой колонке подписи сокращаются с «…» (полный текст — в подсказке), как .seg в макете.
+    Ширина сегмента — по тексту плюс равная доля свободного места (flex: 1 1 auto в макете);
+    в узкой колонке подписи сокращаются с «…» (полный текст — в подсказке).
     """
 
     changed = pyqtSignal(str)
+    PAD, GAP, MIN_SEGMENT = 2, 2, 40
 
     def __init__(self, options: Sequence[Tuple[str, str]], value: Optional[str] = None, parent=None):
         super().__init__(parent)
         self.setProperty("kind", "segmented")
         self.setFixedHeight(32)
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(2, 2, 2, 2)
-        lay.setSpacing(2)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
         self._buttons = {}
         self._keys: List[str] = []
         for key, text in options:
-            b = Button(text, elide=True, checkable=True)
+            b = Button(text, elide=True, checkable=True, parent=self)
             b.setProperty("kind", "seg")
             b.setFixedHeight(28)
-            b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            b.setMinimumWidth(40)
             b.clicked.connect(lambda _=False, k=key: self._pick(k))
             self._group.addButton(b)
-            lay.addWidget(b)
             self._buttons[key] = b
             self._keys.append(key)
         self._value = None
         self.set_value(value if value is not None else self._keys[0])
+
+    def _hints(self) -> List[int]:
+        return [self._buttons[key].sizeHint().width() for key in self._keys]
+
+    def _frame(self) -> int:
+        return self.PAD * 2 + self.GAP * (len(self._keys) - 1)
+
+    def sizeHint(self):  # noqa: N802
+        return QSize(sum(self._hints()) + self._frame(), 32)
+
+    def minimumSizeHint(self):  # noqa: N802
+        return QSize(self.MIN_SEGMENT * len(self._keys) + self._frame(), 32)
+
+    def segment_widths(self, width: int) -> List[float]:
+        """Ширины сегментов при ширине width: как flex: 1 1 auto (лишнее — поровну, нехватка — по ширине)."""
+        hints = self._hints()
+        free = width - self._frame() - sum(hints)
+        if free >= 0:
+            return [h + free / len(hints) for h in hints]
+        total = sum(hints) or 1
+        return [max(self.MIN_SEGMENT, h + free * h / total) for h in hints]
+
+    def _place(self) -> None:
+        x = float(self.PAD)
+        for key, w in zip(self._keys, self.segment_widths(self.width())):
+            left, right = round(x), round(x + w)
+            self._buttons[key].setGeometry(left, self.PAD, right - left, 28)
+            x += w + self.GAP
+
+    def resizeEvent(self, event):  # noqa: N802
+        super().resizeEvent(event)
+        self._place()
+
+    def event(self, event):
+        if event.type() in (QEvent.LayoutRequest, QEvent.Polish, QEvent.StyleChange):
+            self._place()
+        return super().event(event)
 
     def _pick(self, key: str) -> None:
         if key != self._value:
@@ -1587,23 +1661,48 @@ class EdgeShadow(QWidget):
 class TabDelegate(QStyledItemDelegate):
     """Рисует строку вкладки: статус (точка/⚠/спиннер), имя 13/600 и подпись 11.5px с «…»."""
 
-    ROW_HEIGHT = 50          # 48 строка + 2 зазор
+    # .tab макета: 7 + 18.2 (имя 13px × 1.4) + 16.1 (подпись 11.5px × 1.4) + 7 = 48.3, между строками 2 px.
+    # Строки дробные, как в браузере: высоты строк 50/51 px, края плашек — округленные края строк макета.
+    BOX = 48.3
+    PITCH = BOX + 2
+    OFFSET = 1.4             # дробная часть верха первой строки в макете (список начинается не с целого px)
+    NAME_H, SUB_H, PAD_TOP = 18.2, 16.1, 7
+    ROW_HEIGHT = 50          # высота строки без дробной части (строки по 50 и 51 px)
     PAD_LEFT, PAD_RIGHT = 10, 6
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.spin_angle = 0.0
 
-    def sizeHint(self, option, index):  # noqa: N802
-        return QSize(max(0, option.rect.width()), self.ROW_HEIGHT)
+    @classmethod
+    def row_top(cls, row: int) -> int:
+        """Верх строки row в списке (строка 0 — с 0)."""
+        return round(cls.OFFSET + row * cls.PITCH) - round(cls.OFFSET)
 
-    def item_rect(self, rect) -> QRectF:
-        return QRectF(rect).adjusted(self.PAD_LEFT, 1, -self.PAD_RIGHT, -1)
+    @classmethod
+    def row_height(cls, row: int) -> int:
+        return cls.row_top(row + 1) - cls.row_top(row)
+
+    def sizeHint(self, option, index):  # noqa: N802
+        return QSize(max(0, option.rect.width()), self.row_height(max(0, index.row())))
+
+    def item_rect(self, rect, row: int = 0) -> QRectF:
+        """Плашка строки: с 1 px от верха строки до округленного края 48.3 px (как в браузере)."""
+        exact = self.OFFSET + row * self.PITCH
+        height = round(exact + self.BOX) - round(exact)
+        return QRectF(rect.left() + self.PAD_LEFT, rect.top() + 1, rect.width() - self.PAD_LEFT - self.PAD_RIGHT,
+                      height)
+
+    def _text_top(self, rect, row: int) -> float:
+        """Верх имени: точный верх плашки макета + 7 px."""
+        exact = self.OFFSET + row * self.PITCH
+        return rect.top() + 1 + (exact - round(exact)) + self.PAD_TOP
 
     def paint(self, p, option, index):
         p.save()
         p.setRenderHint(QPainter.Antialiasing)
-        r = self.item_rect(option.rect)
+        row = max(0, index.row())
+        r = self.item_rect(option.rect, row)
         selected = bool(option.state & QStyle.State_Selected)
         if selected:
             p.setPen(Qt.NoPen)
@@ -1624,7 +1723,8 @@ class TabDelegate(QStyledItemDelegate):
             p.drawRoundedRect(r.adjusted(1, 1, -1, -1), 5.5, 5.5)
 
         status = index.data(ROLE_STATUS)
-        gx, cy = r.left() + 10, r.center().y()
+        text_top = self._text_top(option.rect, row)
+        gx, cy = r.left() + 10, text_top - self.PAD_TOP + self.BOX / 2
         glyph = QRectF(gx, cy - 8, 16, 16)
         if status == STATUS_RUNNING:
             draw_spinner(p, glyph.adjusted(0.5, 0.5, -0.5, -0.5), C.ACCENT, self.spin_angle)
@@ -1643,11 +1743,11 @@ class TabDelegate(QStyledItemDelegate):
         p.setFont(name_font)
         p.setPen(QColor(C.TEXT))
         name = QFontMetrics(name_font).elidedText(index.data(Qt.DisplayRole) or "", Qt.ElideRight, tw)
-        p.drawText(QRectF(tx, r.top() + 6, tw, 18), Qt.AlignLeft | Qt.AlignVCenter, name)
+        p.drawText(QRectF(tx, text_top, tw, self.NAME_H), Qt.AlignLeft | Qt.AlignVCenter, name)
         p.setFont(sub_font)
         p.setPen(QColor(index.data(ROLE_SUB_COLOR) or C.MUTED))
         sub = QFontMetrics(sub_font).elidedText(index.data(ROLE_SUB) or "", Qt.ElideRight, tw)
-        p.drawText(QRectF(tx, r.top() + 24, tw, 16), Qt.AlignLeft | Qt.AlignVCenter, sub)
+        p.drawText(QRectF(tx, text_top + self.NAME_H, tw, self.SUB_H), Qt.AlignLeft | Qt.AlignVCenter, sub)
         p.restore()
 
 
@@ -1676,7 +1776,6 @@ class SidebarTabList(QListView):
         self.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setUniformItemSizes(True)
         self.setMouseTracking(True)
         self.viewport().setAttribute(Qt.WA_Hover, True)
         self.setFrameShape(QFrame.NoFrame)
@@ -1688,6 +1787,8 @@ class SidebarTabList(QListView):
         self._query = ""
         self._empty_text = ""
         self._silent = False
+        self._items: Dict[str, QStandardItem] = {}   # uid → строка модели (поиск без перебора)
+        self._order: List[str] = []
         self._top, self._bottom = EdgeShadow(self, True), EdgeShadow(self, False)
         bar = self.verticalScrollBar()
         bar.valueChanged.connect(self._update_shadows)
@@ -1701,8 +1802,7 @@ class SidebarTabList(QListView):
     def set_entries(self, entries: Iterable[TabEntry]) -> None:
         """Заменить список. Выделение сохраняется по uid, если вкладка осталась."""
         entries = list(entries)
-        same_order = [self.model_.item(row).data(ROLE_UID) for row in range(self.model_.rowCount())] == \
-            [e.uid for e in entries]
+        same_order = self._order == [e.uid for e in entries]
         self._silent = True
         try:
             if same_order:
@@ -1710,11 +1810,14 @@ class SidebarTabList(QListView):
                     self._fill(self.model_.item(row), entry)
             else:
                 self.model_.clear()
+                self._items = {}
                 for entry in entries:
                     item = QStandardItem()
                     item.setEditable(False)
                     self._fill(item, entry)
                     self.model_.appendRow(item)
+                    self._items[entry.uid] = item
+                self._order = [e.uid for e in entries]
         finally:
             self._silent = False
         if self._selected is not None and self._item(self._selected) is None:
@@ -1725,12 +1828,34 @@ class SidebarTabList(QListView):
 
     def update_entry(self, entry: TabEntry) -> bool:
         """Обновить одну вкладку по uid. False — такой нет."""
-        item = self._item(entry.uid)
-        if item is None:
-            return False
-        self._fill(item, entry)
+        return self.update_entries([entry]) > 0
+
+    def update_entries(self, entries: Iterable[TabEntry]) -> int:
+        """Обновить несколько вкладок по uid (одним проходом). Возвращает число обновленных.
+
+        Выделение не меняется: если вкладка перестала подходить под фильтр (переименована),
+        она просто пропадает из списка, а выбранной остается она же (без сигнала tab_selected).
+        """
+        count, renamed = 0, False
+        self._silent = True
+        try:
+            for entry in entries:
+                item = self._items.get(entry.uid)
+                if item is None:
+                    continue
+                if self._entry(item) == entry:
+                    count += 1
+                    continue
+                renamed = renamed or item.data(Qt.DisplayRole) != entry.name
+                self._fill(item, entry)
+                count += 1
+        finally:
+            self._silent = False
+        if renamed:
+            self._sync_selection()
+            self._update_shadows()
         self._sync_spinner()
-        return True
+        return count
 
     def entries(self) -> List[TabEntry]:
         return [self._entry(self.model_.item(row)) for row in range(self.model_.rowCount())]
@@ -1754,12 +1879,8 @@ class SidebarTabList(QListView):
         return TabEntry(item.data(ROLE_UID), item.data(Qt.DisplayRole), item.data(ROLE_SUB) or "",
                         item.data(ROLE_STATUS) or STATUS_OFF, item.data(Qt.UserRole + 9))
 
-    def _item(self, uid: str) -> Optional[QStandardItem]:
-        for row in range(self.model_.rowCount()):
-            item = self.model_.item(row)
-            if item.data(ROLE_UID) == uid:
-                return item
-        return None
+    def _item(self, uid: Optional[str]) -> Optional[QStandardItem]:
+        return self._items.get(uid) if uid is not None else None
 
     # --- выделение
     def current_uid(self) -> Optional[str]:
@@ -1829,7 +1950,7 @@ class SidebarTabList(QListView):
 
     # --- анимация спиннера
     def _sync_spinner(self) -> None:
-        running = any(self.model_.item(r).data(ROLE_STATUS) == STATUS_RUNNING for r in range(self.model_.rowCount()))
+        running = any(item.data(ROLE_STATUS) == STATUS_RUNNING for item in self._items.values())
         if running and not self._spin_timer.isActive():
             self._spin_timer.start()
         elif not running:
@@ -2150,6 +2271,72 @@ def confirm(parent: QWidget, title: str, text: str = "", ok_text: str = "Да", 
 
 
 # =========================================================================== заголовок вкладки
+_SIZE_EXTRA = {}
+
+
+def size_attribute_extra(f: QFont) -> int:
+    """Запас ширины поля <input size=N> в браузере сверх N средних знаков: наибольшая ширина знака
+    (по рамке всех знаков шрифта, таблица head) минус средняя (OS/2 xAvgCharWidth, как averageCharWidth)."""
+    key = f.key()
+    extra = _SIZE_EXTRA.get(key)
+    if extra is None:
+        fm = QFontMetrics(f)
+        widest = fm.maxWidth()
+        raw = QRawFont.fromFont(f)
+        head = bytes(raw.fontTable(b"head")) if raw.isValid() else b""
+        if len(head) >= 42 and raw.unitsPerEm() > 0:
+            x_min, x_max = struct.unpack(">h", head[36:38])[0], struct.unpack(">h", head[40:42])[0]
+            widest = int((x_max - x_min) * raw.pixelSize() / raw.unitsPerEm())
+        extra = _SIZE_EXTRA[key] = max(0, widest - fm.averageCharWidth())
+    return extra
+
+
+class FocusHalo(QWidget):
+    """Мягкая обводка 3 px вокруг поля в фокусе (box-shadow: 0 0 0 3px rgba(31,95,209,.18) в макете).
+
+    Рисуется поверх ближайшего предка, в который помещается (поле может стоять у самого края своего
+    родителя), и следует за полем при изменении размеров и положения.
+    """
+
+    WIDTH = 3
+
+    def __init__(self, field: QWidget, radius: float = 6.0):
+        super().__init__(field.parentWidget())  # пока не показана — у родителя поля; при показе — у предка
+        self.field = field
+        self.radius = radius
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_NoSystemBackground)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.hide()
+
+    def sync(self) -> None:
+        field = self.field
+        if not field.hasFocus() or not field.isVisible():
+            self.hide()
+            return
+        w = self.WIDTH
+        host = field.parentWidget()
+        rect = QRect(field.mapTo(host, QPoint(0, 0)), field.size()).adjusted(-w, -w, w, w)
+        while host.parentWidget() is not None and not host.rect().contains(rect):
+            rect.translate(host.pos())
+            host = host.parentWidget()
+        if self.parentWidget() is not host:
+            self.setParent(host)
+        self.setGeometry(rect)
+        self.raise_()
+        self.show()
+        self.update()
+
+    def paintEvent(self, event):  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w = self.WIDTH
+        outer, inner = QPainterPath(), QPainterPath()
+        outer.addRoundedRect(QRectF(self.rect()), self.radius + w, self.radius + w)
+        inner.addRoundedRect(QRectF(self.rect()).adjusted(w, w, -w, -w), self.radius, self.radius)
+        p.fillPath(outer.subtracted(inner), QColor(31, 95, 209, 46))
+
+
 class _TitleLineEdit(QLineEdit):
     """Поле названия: без фокуса длинный текст обрезается с «…» с начала строки (text-overflow: ellipsis)."""
 
@@ -2192,9 +2379,11 @@ class TitleEdit(QWidget):
 
     Текст начинается на TEXT_INSET px правее левого края (рамка + поля): в макете поле сдвинуто влево
     (margin-left: -8px), чтобы текст стоял ровно над строкой состояния, — уменьшите левый отступ раскладки.
+    В фокусе вокруг поля — мягкая синяя обводка 3 px (box-shadow макета), ее рисует FocusHalo.
     """
 
-    TEXT_INSET = 9
+    TEXT_INSET = 8      # рамка 1 + поле 5 + внутренний отступ QLineEdit 2 (в макете: рамка 1 + поле 7)
+    CHROME = 2 * TEXT_INSET
     text_edited = pyqtSignal(str)
     editing_finished = pyqtSignal(str)
 
@@ -2222,6 +2411,7 @@ class TitleEdit(QWidget):
         self.line_edit.textEdited.connect(self._edited)
         self.line_edit.editingFinished.connect(self._finished)
         self.line_edit.installEventFilter(self)
+        self.halo = FocusHalo(self.line_edit)
         self._fit()
 
     def text(self) -> str:
@@ -2262,10 +2452,12 @@ class TitleEdit(QWidget):
 
     def _fit(self) -> None:
         fm = self.line_edit.fontMetrics()
-        frame = 16 + 2
-        by_size = fm.averageCharWidth() * self.chars()
+        frame = self.CHROME
+        # как ширина <input size=N> в браузере: N × средняя ширина знака + (наибольшая − средняя)
+        extra = size_attribute_extra(self.line_edit.font())
+        by_size = fm.averageCharWidth() * self.chars() + extra
         by_text = fm.horizontalAdvance(self.line_edit.text()) + 6
-        self.line_edit.setMinimumWidth(min(by_size, fm.averageCharWidth() * 6) + frame)
+        self.line_edit.setMinimumWidth(min(by_size, fm.averageCharWidth() * 6 + extra) + frame)
         # как size="len+2" (не больше 48 знаков) в макете: длиннее — текст обрезается «…»
         self._wanted = (max(by_size, by_text) if self.chars() < 48 else by_size) + frame
         self.line_edit.setMaximumWidth(self._wanted)
@@ -2292,7 +2484,18 @@ class TitleEdit(QWidget):
                 return True
             if event.type() in (QEvent.FontChange, QEvent.StyleChange, QEvent.Polish):
                 QTimer.singleShot(0, self._fit)
+            if event.type() in (QEvent.FocusIn, QEvent.FocusOut, QEvent.Resize, QEvent.Move, QEvent.Show,
+                                QEvent.Hide):
+                self.halo.sync()
         return False
+
+    def moveEvent(self, event):  # noqa: N802
+        super().moveEvent(event)
+        self.halo.sync()
+
+    def resizeEvent(self, event):  # noqa: N802
+        super().resizeEvent(event)
+        self.halo.sync()
 
 
 def style_menu(menu) -> None:
