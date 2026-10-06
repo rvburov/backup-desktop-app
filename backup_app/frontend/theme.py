@@ -11,13 +11,16 @@
     button.setProperty("variant", "primary")      # или set_props(button, variant="primary")
     frame.setProperty("kind", "card")
 После смены свойства у уже показанного виджета нужен repolish(widget) — set_props делает это сам.
+
+Рамка фокуса — только с клавиатуры: apply() ставит FocusTracker, он ведет свойство kbfocus="true"
+(в QSS — [kbfocus="true"] вместо :focus, в paintEvent — has_keyboard_focus()).
 """
 import os
 from typing import Dict, Optional, Tuple
 
-from PyQt5.QtCore import QRectF, Qt
+from PyQt5.QtCore import QEvent, QObject, QRectF, Qt
 from PyQt5.QtGui import QColor, QFont, QFontDatabase, QGuiApplication, QPainter, QPainterPath, QPalette, QPen
-from PyQt5.QtWidgets import QApplication, QProxyStyle, QStyle, QStyleFactory, QWidget
+from PyQt5.QtWidgets import QAbstractButton, QApplication, QProxyStyle, QStyle, QStyleFactory, QWidget
 
 from .resources import resource_path
 
@@ -81,12 +84,14 @@ DISABLED_OPACITY = 0.45
 
 # Размеры (px) — общие для QSS и виджетов.
 FIELD_HEIGHT = 32
-FIELD_HEIGHT_SMALL = 28
+FIELD_HEIGHT_SMALL = 30        # поле поиска вкладок (в макете height: 30px)
+FIELD_HEIGHT_SEARCH = FIELD_HEIGHT_SMALL
 BUTTON_HEIGHT = 32
 BUTTON_HEIGHT_SMALL = 28
 RADIUS_CARD = 8
 RADIUS_FIELD = 6
 BASE_FONT_PX = 13
+LINE_HEIGHT = 1.4              # межстрочный интервал макета (body line-height)
 
 # --------------------------------------------------------------------------- шрифты
 # Начертания Golos Text из Google Fonts регистрируются как отдельные семейства (и в Windows, и в Linux),
@@ -123,7 +128,9 @@ def load_fonts(folder: Optional[str] = None) -> bool:
     families = set(QFontDatabase().families())
     system = QFontDatabase.systemFont(QFontDatabase.GeneralFont).family()
     fixed = QFontDatabase.systemFont(QFontDatabase.FixedFont).family()
-    fallback = {"regular": (system, 400), "medium": (system, 500), "semibold": (system, 600), "mono": (fixed, 400)}
+    # Qt5 переводит font-weight из QSS делением на 8: 456 → 57 (Medium), 504 → 63 (DemiBold);
+    # «честные» 500/600 дали бы 63/75, то есть полужирный и жирный.
+    fallback = {"regular": (system, 400), "medium": (system, 456), "semibold": (system, 504), "mono": (fixed, 400)}
     ok = True
     for role, (family, weight) in _BUNDLED.items():
         if family in families:
@@ -161,10 +168,8 @@ def font(role: str = "regular", px: float = BASE_FONT_PX, letter_spacing: float 
     name, weight = _fonts[role]
     f = QFont(name)
     f.setPointSizeF(px_to_pt(px))
-    if weight >= 600:
-        f.setWeight(QFont.DemiBold if weight == 600 else QFont.Bold)
-    elif weight >= 500:
-        f.setWeight(QFont.Medium)
+    if weight != 400:
+        f.setWeight(min(99, round(weight / 8)))  # так же, как Qt5 понимает font-weight в QSS
     if letter_spacing:
         f.setLetterSpacing(QFont.AbsoluteSpacing, letter_spacing)
     return f
@@ -221,6 +226,23 @@ def build_palette() -> QPalette:
 
 
 # --------------------------------------------------------------------------- QSS
+# Размер шрифта (px) однострочных надписей QLabel[kind]: высота строки = px * LINE_HEIGHT.
+_TEXT_KINDS = {
+    "h1": 18, "h2": 13.5, "h3": 13, "medium": 13, "semibold": 13, "muted": 12, "muted-sm": 11.5,
+    "secondary": 12.5, "faint": 12, "caps": 11, "count": 11, "warn": 12, "danger": 11.5, "ok": 12.5,
+    "status": 12.5, "mono": 11, "mono-body": 12, "mono-time": 11.5,
+}
+
+
+def line_box(px: float) -> int:
+    """Высота строки текста размером px (line-height 1.4 макета), округленная до пикселя."""
+    return int(px * LINE_HEIGHT + 0.5)
+
+
+def _line_boxes() -> str:
+    return "\n".join(f'QLabel[kind="{kind}"] {{ min-height: {line_box(px)}px; }}' for kind, px in _TEXT_KINDS.items())
+
+
 def build_stylesheet() -> str:
     """Полная таблица стилей приложения. Вызывать после load_fonts()."""
     reg, med, semi, mono = (qss_font(r) for r in ("regular", "medium", "semibold", "mono"))
@@ -243,9 +265,9 @@ QLabel {{ background: transparent; }}
 /* ---------- текст: QLabel[kind=...] ---------- */
 QLabel[kind="h1"] {{ {semi} {_fs(18)} }}
 QLabel[kind="h2"] {{ {semi} {_fs(13.5)} }}
-QLabel[kind="h3"] {{ {semi} {_fs(13)} }}
-QLabel[kind="medium"] {{ {med} }}
-QLabel[kind="semibold"] {{ {semi} }}
+QLabel[kind="h3"], QWidget[kind="h3"] {{ {semi} {_fs(13)} }}
+QLabel[kind="medium"], QWidget[kind="medium"] {{ {med} }}
+QLabel[kind="semibold"], QWidget[kind="semibold"] {{ {semi} }}
 QLabel[kind="muted"], QWidget[kind="muted"] {{ {_fs(12)} color: {C.MUTED}; }}
 QLabel[kind="muted-sm"] {{ {_fs(11.5)} color: {C.MUTED}; }}
 QLabel[kind="secondary"], QWidget[kind="secondary"] {{ {_fs(12.5)} color: {C.TEXT2}; }}
@@ -277,6 +299,8 @@ QLabel[kind="note-sm"], QWidget[kind="note-sm"] {{ {_fs(12)} color: {C.MUTED}; b
     border-radius: 6px; padding: 9px 11px; }}
 QLabel[kind="empty"], QWidget[kind="empty"] {{ {_fs(12.5)} color: {C.MUTED}; border: 1.5px dashed {C.INPUT};
     border-radius: 8px; padding: 18px 12px; }}
+/* строка текста высотой line-height 1.4, как в макете (текст по центру строки) */
+{_line_boxes()}
 
 /* ---------- поверхности: QFrame[kind=...] ---------- */
 QFrame[kind="sidebar"] {{ background: {C.SIDE}; }}
@@ -303,18 +327,19 @@ QWidget[kind="option"]:hover {{ background: {C.OPT_HOVER}; }}
 
 /* ---------- кнопки ---------- */
 QPushButton, QToolButton {{ {med} {_fs(13)} color: {C.TEXT}; background: {C.CARD}; border: 1px solid {C.INPUT};
-    border-radius: 6px; padding: 0 12px; min-height: 30px; }}
+    border-radius: 6px; padding: 0 12px; min-height: {BUTTON_HEIGHT - 2}px; }}
 QPushButton:hover, QToolButton:hover {{ background: {C.HOVER}; border-color: {C.INPUT_HOVER}; }}
 QPushButton:pressed, QToolButton:pressed {{ background: {C.GHOST_HOVER}; }}
-QPushButton:focus, QToolButton:focus {{ border-color: {C.ACCENT}; }}
+QPushButton[kbfocus="true"], QToolButton[kbfocus="true"] {{ border-color: {C.ACCENT}; }}
 QPushButton:disabled, QToolButton:disabled {{ color: {dis_text}; background: {C.CARD}; border-color: {dis_border}; }}
-QPushButton[small="true"], QToolButton[small="true"] {{ {_fs(12.5)} padding: 0 9px; min-height: 26px; }}
+QPushButton[small="true"], QToolButton[small="true"] {{ {_fs(12.5)} padding: 0 9px;
+    min-height: {BUTTON_HEIGHT_SMALL - 2}px; }}
 QPushButton[iconOnly="true"], QToolButton[iconOnly="true"] {{ padding: 0; }}
 QPushButton::menu-indicator, QToolButton::menu-indicator {{ image: none; width: 0; }}
 
 QPushButton[variant="primary"] {{ background: {C.ACCENT}; border-color: {C.ACCENT}; color: {C.WHITE}; }}
 QPushButton[variant="primary"]:hover {{ background: {C.ACCENT_HOVER}; border-color: {C.ACCENT_HOVER}; }}
-QPushButton[variant="primary"]:focus {{ border-color: #0B2F75; }}
+QPushButton[variant="primary"][kbfocus="true"] {{ border-color: #0B2F75; }}
 QPushButton[variant="primary"]:disabled {{ background: {dis_primary}; border-color: {dis_primary};
     color: {dis_primary_text}; }}
 
@@ -323,42 +348,42 @@ QPushButton[variant="ghost"], QToolButton[variant="ghost"] {{ background: transp
 QPushButton[variant="ghost"]:hover, QToolButton[variant="ghost"]:hover {{ background: {C.GHOST_HOVER};
     border-color: transparent; }}
 QPushButton[variant="ghost"]:pressed, QToolButton[variant="ghost"]:pressed {{ background: {C.SEG_HOVER}; }}
-QPushButton[variant="ghost"]:focus, QToolButton[variant="ghost"]:focus {{ border-color: {C.ACCENT}; }}
+QPushButton[variant="ghost"][kbfocus="true"], QToolButton[variant="ghost"][kbfocus="true"] {{ border-color: {C.ACCENT}; }}
 QPushButton[variant="ghost"]:disabled, QToolButton[variant="ghost"]:disabled {{ background: transparent;
     border-color: transparent; color: {dis_ghost}; }}
 
 QPushButton[variant="link"] {{ background: transparent; border-color: transparent; color: {C.ACCENT};
     text-align: left; padding-left: 9px; }}
 QPushButton[variant="link"]:hover {{ background: {C.SIDE_HOVER}; border-color: transparent; }}
-QPushButton[variant="link"]:focus {{ border-color: {C.ACCENT}; }}
+QPushButton[variant="link"][kbfocus="true"] {{ border-color: {C.ACCENT}; }}
 QPushButton[variant="link"]:disabled {{ background: transparent; color: {faded(C.ACCENT)}; }}
 
 QPushButton[variant="danger"] {{ color: {C.DANGER}; border-color: {C.DANGER_BORDER}; }}
 QPushButton[variant="danger"]:hover {{ background: {C.DANGER_SOFT}; border-color: {C.DANGER_BORDER_HOVER}; }}
-QPushButton[variant="danger"]:focus {{ border-color: {C.DANGER}; }}
+QPushButton[variant="danger"][kbfocus="true"] {{ border-color: {C.DANGER}; }}
 QPushButton[variant="danger"]:disabled {{ background: {C.CARD}; color: {dis_danger}; border-color: {dis_danger_border}; }}
 
 QPushButton[variant="danger-solid"] {{ background: {C.DANGER}; border-color: {C.DANGER}; color: {C.WHITE}; }}
 QPushButton[variant="danger-solid"]:hover {{ background: {C.DANGER_HOVER}; border-color: {C.DANGER_HOVER}; }}
-QPushButton[variant="danger-solid"]:focus {{ border-color: #5C0F09; }}
+QPushButton[variant="danger-solid"][kbfocus="true"] {{ border-color: #5C0F09; }}
 
 QPushButton[variant="toast-close"] {{ background: transparent; border-color: transparent; }}
 QPushButton[variant="toast-close"]:hover {{ background: rgba(255, 255, 255, 0.12); }}
-QPushButton[variant="toast-close"]:focus {{ border-color: {C.TOAST_INFO}; }}
+QPushButton[variant="toast-close"][kbfocus="true"] {{ border-color: {C.TOAST_INFO}; }}
 QPushButton[variant="notice-close"] {{ background: transparent; border-color: transparent; }}
 QPushButton[variant="notice-close"]:hover {{ background: rgba(142, 28, 18, 0.08); }}
-QPushButton[variant="notice-close"]:focus {{ border-color: {C.NOTICE_TEXT}; }}
+QPushButton[variant="notice-close"][kbfocus="true"] {{ border-color: {C.NOTICE_TEXT}; }}
 QPushButton[variant="stepper"] {{ background: transparent; border: 1px solid transparent; border-radius: 0;
     color: {C.TEXT2}; padding: 0; }}
 QPushButton[variant="stepper"]:hover {{ background: {C.GHOST_HOVER}; }}
-QPushButton[variant="stepper"]:focus {{ border-color: {C.ACCENT}; }}
+QPushButton[variant="stepper"][kbfocus="true"] {{ border-color: {C.ACCENT}; }}
 
 /* пункт боковой панели («Настройки»): как строка вкладки */
 QPushButton[variant="nav"] {{ background: transparent; border: 1px solid transparent; border-radius: 6px;
     text-align: left; padding: 0 9px; min-height: 32px; }}
 QPushButton[variant="nav"]:hover {{ background: {C.SIDE_HOVER}; }}
 QPushButton[variant="nav"]:checked {{ background: {C.CARD}; border-color: {C.RING}; }}
-QPushButton[variant="nav"]:focus {{ border-color: {C.ACCENT}; }}
+QPushButton[variant="nav"][kbfocus="true"] {{ border-color: {C.ACCENT}; }}
 
 /* ---------- переключатель периодов и дни недели ---------- */
 QFrame[kind="segmented"] {{ background: {C.DIVIDER}; border: none; border-radius: 7px; }}
@@ -367,24 +392,26 @@ QPushButton[kind="seg"] {{ {med} {_fs(12.5)} background: transparent; border: 1p
 QPushButton[kind="seg"]:hover {{ background: {C.SEG_HOVER}; }}
 QPushButton[kind="seg"]:checked {{ background: {C.CARD}; color: {C.TEXT}; border-color: {C.RING};
     border-bottom-color: #C5CDD8; }}
-QPushButton[kind="seg"]:focus {{ border-color: {C.ACCENT}; }}
+QPushButton[kind="seg"][kbfocus="true"] {{ border-color: {C.ACCENT}; }}
 QPushButton[kind="chip"] {{ {med} {_fs(12)} background: {C.CARD}; border: 1px solid {C.INPUT}; border-radius: 5px;
     padding: 0; min-height: 26px; max-height: 26px; min-width: 32px; max-width: 32px; color: {C.TEXT2}; }}
 QPushButton[kind="chip"]:hover {{ border-color: {C.CHIP_HOVER}; }}
 QPushButton[kind="chip"]:checked {{ background: {C.ACCENT}; border-color: {C.ACCENT}; color: {C.WHITE}; }}
-QPushButton[kind="chip"]:focus {{ border-color: {C.ACCENT_HOVER}; }}
-QPushButton[kind="chip"]:checked:focus {{ border-color: #0B2F75; }}
+QPushButton[kind="chip"][kbfocus="true"] {{ border-color: {C.ACCENT_HOVER}; }}
+QPushButton[kind="chip"][kbfocus="true"]:checked {{ border-color: #0B2F75; }}
 
 /* ---------- поля ввода ---------- */
 QLineEdit, QAbstractSpinBox {{ {reg} {_fs(13)} background: {C.CARD}; border: 1px solid {C.INPUT};
-    border-radius: 6px; padding: 0 8px; min-height: 30px; max-height: 30px; color: {C.TEXT};
+    border-radius: 6px; padding: 0 8px; min-height: {FIELD_HEIGHT - 2}px; max-height: {FIELD_HEIGHT - 2}px;
+    color: {C.TEXT};
     selection-background-color: {C.ACCENT}; selection-color: {C.WHITE}; }}
 QLineEdit:focus, QAbstractSpinBox:focus {{ border-color: {C.ACCENT}; }}
 QLineEdit:disabled, QAbstractSpinBox:disabled {{ color: {dis_text}; background: {C.READONLY_BG};
     border-color: {dis_border}; }}
 QLineEdit[readOnly="true"] {{ background: {C.READONLY_BG}; }}
 QLineEdit[mono="true"] {{ {mono} {_fs(12)} }}
-QLineEdit[small="true"] {{ {_fs(12.5)} min-height: 28px; max-height: 28px; }}
+QLineEdit[small="true"] {{ {_fs(12.5)} min-height: {FIELD_HEIGHT_SMALL - 2}px;
+    max-height: {FIELD_HEIGHT_SMALL - 2}px; }}
 QLineEdit[kind="title"] {{ {semi} {_fs(18)} background: transparent; border: 1px solid transparent;
     padding: 2px 6px; min-height: 28px; max-height: 32px; }}
 QLineEdit[kind="title"]:hover {{ background: {C.CARD}; border-color: {C.INPUT}; }}
@@ -437,6 +464,79 @@ QProgressBar::chunk {{ background: {C.ACCENT}; border-radius: 3px; }}
 """
 
 
+# --------------------------------------------------------------------------- фокус с клавиатуры
+KBFOCUS = "kbfocus"
+KEYBOARD_REASONS = (Qt.TabFocusReason, Qt.BacktabFocusReason, Qt.ShortcutFocusReason)
+_MOUSE_EVENTS = frozenset((QEvent.MouseButtonPress, QEvent.MouseButtonDblClick, QEvent.TouchBegin))
+
+
+class FocusTracker(QObject):
+    """Рамка фокуса только при работе с клавиатуры (button:focus-visible макета).
+
+    Фильтр событий приложения (ставит apply()). Виджет, получивший фокус клавишей (Tab, Shift+Tab,
+    сочетание, стрелки), получает свойство kbfocus="true"; уход фокуса или щелчок мышью его снимают.
+    QSS рисует рамку по [kbfocus="true"], нарисованные вручную элементы спрашивают has_keyboard_focus().
+    Причины фокуса мало: Qt сам переводит фокус «по Tab», когда скрывается виджет с фокусом (например,
+    при смене страницы щелчком), поэтому учитывается и то, чем пользователь действовал последним.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.mouse_mode = False
+
+    def is_keyboard(self, reason) -> bool:
+        return reason in KEYBOARD_REASONS and not self.mouse_mode
+
+    def eventFilter(self, obj, event):  # noqa: N802
+        kind = event.type()
+        if kind in _MOUSE_EVENTS:
+            self.mouse_mode = True
+            focused = QApplication.focusWidget()
+            if focused is not None:
+                _set_kbfocus(focused, False)
+        elif kind == QEvent.KeyPress:
+            self.mouse_mode = False
+        elif kind == QEvent.FocusIn:
+            if obj.isWidgetType():
+                _set_kbfocus(obj, self.is_keyboard(event.reason()))
+        elif kind == QEvent.FocusOut:
+            if obj.isWidgetType():
+                _set_kbfocus(obj, False)
+        return False
+
+
+_tracker: Optional[FocusTracker] = None
+
+
+def focus_tracker() -> FocusTracker:
+    """Общий FocusTracker приложения (создается при первом обращении)."""
+    global _tracker
+    if _tracker is None:
+        _tracker = FocusTracker()
+    return _tracker
+
+
+def _set_kbfocus(widget: QWidget, on: bool) -> None:
+    value = "true" if on else None
+    if widget.property(KBFOCUS) == value:
+        return
+    widget.setProperty(KBFOCUS, value)
+    if isinstance(widget, QAbstractButton):
+        repolish(widget)
+    else:
+        widget.update()
+
+
+def has_keyboard_focus(widget: Optional[QWidget]) -> bool:
+    """Есть ли у виджета фокус, полученный с клавиатуры (тогда рисуется рамка фокуса)."""
+    return widget is not None and widget.hasFocus() and widget.property(KBFOCUS) == "true"
+
+
+def keyboard_focus_reason(reason) -> bool:
+    """Пришел ли фокус с такой причиной от клавиатуры (для focusInEvent своих виджетов)."""
+    return focus_tracker().is_keyboard(reason)
+
+
 # --------------------------------------------------------------------------- стиль Qt
 class AppStyle(QProxyStyle):
     """Fusion + флажок и стрелки счетчика как в макете (рисуются вектором, без файлов-картинок)."""
@@ -458,7 +558,7 @@ class AppStyle(QProxyStyle):
 
     def drawPrimitive(self, element, option, painter, widget=None):
         if element == QStyle.PE_IndicatorCheckBox:
-            self._draw_checkbox(option, painter)
+            self._draw_checkbox(option, painter, widget)
             return
         if element in (QStyle.PE_IndicatorSpinUp, QStyle.PE_IndicatorSpinDown,
                        QStyle.PE_IndicatorArrowUp, QStyle.PE_IndicatorArrowDown):
@@ -468,11 +568,13 @@ class AppStyle(QProxyStyle):
         super().drawPrimitive(element, option, painter, widget)
 
     @staticmethod
-    def _draw_checkbox(option, painter):
+    def _draw_checkbox(option, painter, widget=None):
         enabled = bool(option.state & QStyle.State_Enabled)
         checked = bool(option.state & (QStyle.State_On | QStyle.State_NoChange))
         hover = bool(option.state & QStyle.State_MouseOver)
-        focus = bool(option.state & QStyle.State_HasFocus)
+        # рамка фокуса — только при работе с клавиатуры (у флажка-виджета; без виджета — по состоянию)
+        focus = bool(option.state & QStyle.State_HasFocus) and (
+            not isinstance(widget, QWidget) or widget.property(KBFOCUS) == "true")
         side = min(option.rect.width(), option.rect.height(), AppStyle.INDICATOR)
         rect = QRectF(option.rect.x() + (option.rect.width() - side) / 2,
                       option.rect.y() + (option.rect.height() - side) / 2, side, side)
@@ -545,6 +647,7 @@ def enable_hidpi() -> None:
 def apply(app: QApplication, fonts_folder: Optional[str] = None) -> bool:
     """Стиль, шрифты, палитра и QSS для всего приложения. Возвращает load_fonts()."""
     app.setStyle(AppStyle())
+    app.installEventFilter(focus_tracker())  # повторная установка не дублирует фильтр
     ok = load_fonts(fonts_folder)
     base = font("regular", BASE_FONT_PX)
     app.setFont(base)

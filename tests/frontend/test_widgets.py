@@ -1,9 +1,9 @@
 """Оформление и готовые элементы интерфейса: собираются без экрана и ведут себя как в макете."""
 import pytest
 from PyQt5.QtCore import QPoint, Qt, QTimer, qInstallMessageHandler
-from PyQt5.QtGui import QColor, QIcon
+from PyQt5.QtGui import QColor, QFont, QIcon
 from PyQt5.QtTest import QTest
-from PyQt5.QtWidgets import QApplication, QLabel, QMenu, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import QApplication, QHBoxLayout, QLabel, QLineEdit, QMenu, QStackedWidget, QVBoxLayout, QWidget
 
 from backup_app.frontend import icons, theme
 from backup_app.frontend import widgets as W
@@ -61,8 +61,21 @@ def test_fonts_fall_back_to_system(themed, monkeypatch, tmp_path):
     try:
         assert theme.load_fonts(str(tmp_path)) is False
         assert theme.family("semibold") != "Нет Такого Шрифта"
-        assert "font-weight: 600" in theme.qss_font("semibold")
-        assert theme.font("semibold", 13).weight() >= 63
+        assert theme.font("semibold", 13).weight() == QFont.DemiBold
+        # Qt5 делит font-weight из QSS на 8: заголовок должен стать DemiBold (63), а не Bold (75)
+        h2 = QLabel("Заголовок")
+        h2.setProperty("kind", "h2")
+        h2.setStyleSheet(theme.build_stylesheet())
+        h2.ensurePolished()
+        assert h2.font().weight() == QFont.DemiBold
+        monkeypatch.setitem(theme._BUNDLED, "medium", ("Нет Такого Шрифта", 400))
+        theme.load_fonts(str(tmp_path))
+        assert theme.font("medium", 13).weight() == QFont.Medium
+        button = QLabel("Кнопка")
+        button.setProperty("kind", "medium")
+        button.setStyleSheet(theme.build_stylesheet())
+        button.ensurePolished()
+        assert button.font().weight() == QFont.Medium
     finally:
         monkeypatch.undo()
         assert theme.load_fonts() is True
@@ -168,6 +181,39 @@ def test_button_variants_sizes_and_elide(host):
     assert primary.variant() == "ghost" and primary.property("variant") == "ghost"
     primary.setEnabled(False)
     primary.grab()  # рисуется и в недоступном виде
+    # подсказка следует за текстом и без смены ширины
+    long.setText("Все")
+    assert not long.is_elided() and long.toolTip() == ""
+    long.setText("Копировать все вкладки сразу")
+    assert long.is_elided() and long.toolTip() == "Копировать все вкладки сразу"
+
+
+def _ink_columns(widget, color_test):
+    image = widget.grab().toImage()
+    return [x for x in range(image.width())
+            if any(color_test(QColor.fromRgb(image.pixel(x, y))) for y in range(image.height()))]
+
+
+def test_button_elide_without_icon(host):
+    plain = show_in(host, W.Button("Сбросить все настройки по умолчанию", variant="danger", elide=True))
+    plain.setFixedWidth(140)
+    pump(host)
+    assert plain.is_elided() and plain.toolTip() == plain.text()
+    assert plain._shown_text().endswith("…")
+    # текст начинается у левого поля (12px), а не обрезан по краям, как у QPushButton без «…»
+    red = _ink_columns(plain, lambda c: c.red() > 150 and c.green() < 90 and c.blue() < 90)
+    border = [x for x in red if 3 <= x <= plain.width() - 4]
+    assert border and min(border) >= 10
+    plain.setFixedWidth(400)
+    pump(host)
+    assert not plain.is_elided() and plain.toolTip() == ""
+    tip = show_in(host, W.Button("Очень длинная подпись кнопки", elide=True, tooltip="Подсказка"))
+    tip.setFixedWidth(80)
+    pump(host)
+    assert tip.toolTip() == "Очень длинная подпись кнопки"
+    tip.setFixedWidth(400)
+    pump(host)
+    assert tip.toolTip() == "Подсказка"  # своя подсказка возвращается, когда текст помещается
 
 
 def test_toggle_switch(host):
@@ -199,6 +245,19 @@ def test_segmented(host):
     assert seg.value() == "daily" and got[-1] == "daily"
 
 
+def test_segmented_elides_in_narrow_column(host):
+    seg = show_in(host, W.Segmented([("daily", "Ежедневно"), ("weekly", "Еженедельно"),
+                                     ("monthly", "Ежемесячно")], "daily"), width=282)
+    pump(host)
+    weekly = seg.button("weekly")
+    assert weekly.width() < weekly.sizeHint().width()
+    assert weekly.is_elided() and weekly._shown_text().endswith("…") and weekly.toolTip() == "Еженедельно"
+    seg.grab()
+    host.setFixedWidth(600)
+    pump(host)
+    assert not weekly.is_elided() and weekly.toolTip() == ""
+
+
 def test_day_chips(host):
     chips = show_in(host, W.DayChips(0))
     got = collect(chips.changed)
@@ -225,6 +284,15 @@ def test_monthday_stepper_wraps(host):
     assert got == [1, 31, 30]
     stepper.set_value(40)
     assert stepper.value() == 31
+    # стрелки и +/- на кнопках шагают, а не уводят фокус
+    stepper.up_button.setFocus(Qt.TabFocusReason)
+    QTest.keyClick(stepper.up_button, Qt.Key_Up)
+    assert stepper.value() == 1 and got[-1] == 1
+    QTest.keyClick(stepper.up_button, Qt.Key_Left)
+    QTest.keyClick(stepper.down_button, Qt.Key_Down)
+    assert stepper.value() == 30
+    QTest.keyClick(stepper.down_button, Qt.Key_Plus)
+    assert stepper.value() == 31 and got[-4:] == [1, 31, 30, 31]
 
 
 def test_switch_row_and_option_check(host):
@@ -244,6 +312,42 @@ def test_switch_row_and_option_check(host):
     assert opt.isChecked() and toggled == [True]
     opt.setChecked(False, silent=True)
     assert not opt.isChecked() and toggled == [True]
+
+
+def test_rows_keep_text_together_when_taller(host):
+    row = W.SwitchRow("Запускать вместе с Windows", "Программа запускается при входе в систему", title_kind="h3",
+                      margins=(0, 0, 0, 0))
+    opt = W.OptionCheck("Хранить историю копий", "старые копии не удаляются")
+    for w in (row, opt):
+        show_in(host, w)
+        w.setFixedHeight(160)
+    pump(host)
+    # строки по line-height 1.4: 13px → 18, 12px → 17 (в макете 18.2 + 16.8 = 35)
+    assert row.title_label.height() == 18 and row.hint_label.height() == 17
+    assert row.hint_label.y() == row.title_label.geometry().bottom() + 1
+    text_mid = (row.title_label.y() + row.hint_label.geometry().bottom()) / 2
+    assert abs(text_mid - row.switch.geometry().center().y()) <= 2  # align-items: center
+    assert opt.hint_label.y() == opt.text_label.geometry().bottom() + 1
+    assert opt.text_label.y() <= 8  # align-items: flex-start
+    lone = W.SwitchRow("Без подсказки")
+    assert lone.hint_label.isHidden() and not lone.hint_label.isWindow()
+
+
+def test_label_line_boxes_and_field_heights(host):
+    holder = QWidget()
+    lay = QVBoxLayout(holder)
+    labels = {kind: W.label("Копировать по расписанию", kind) for kind in ("medium", "muted", "h2", "h1", "caps")}
+    search, field = QLineEdit(), QLineEdit()
+    theme.set_props(search, small=True)
+    for w in list(labels.values()) + [search, field]:
+        lay.addWidget(w)
+    lay.addStretch(1)
+    show_in(host, holder)
+    pump(host)
+    assert {k: w.height() for k, w in labels.items()} == {"medium": 18, "muted": 17, "h2": 19, "h1": 25, "caps": 15}
+    assert theme.line_box(13) == 18 and theme.line_box(12.5) == 18
+    assert search.height() == theme.FIELD_HEIGHT_SMALL == theme.FIELD_HEIGHT_SEARCH == 30
+    assert field.height() == theme.FIELD_HEIGHT == 32
 
 
 # --------------------------------------------------------------------------- карточки и текст
@@ -283,6 +387,11 @@ def test_elided_and_wrapping_labels(host):
     pump(host)
     assert elided.text().startswith("Очень длинное") and elided.is_elided()
     assert elided.elided_text().endswith("…") and elided.toolTip() == elided.text()
+    width = elided.width()
+    elided.setText("коротко")  # ширина та же — подсказка все равно обновляется
+    assert elided.width() == width and elided.toolTip() == ""
+    elided.setText("Еще одно очень длинное название вкладки, которое не помещается")
+    assert elided.toolTip() == elided.text()
     assert wrap.heightForWidth(120) > wrap.heightForWidth(1200)
     assert wrap.height() >= wrap.heightForWidth(wrap.width()) - 1
     assert badge.width() <= 260 and badge.is_elided()
@@ -460,8 +569,74 @@ def test_overlay_dialog_real_loop(host):
     assert finished == [False]
 
 
+def test_overlay_dialog_returns_focus(host):
+    before = W.Button("Удалить вкладку")
+    show_in(host, before)
+    QApplication.setActiveWindow(host)
+    pump()
+    before.setFocus(Qt.TabFocusReason)
+    pump()
+    assert QApplication.focusWidget() is before
+    dialog = W.OverlayDialog(host, "Удалить вкладку «Фото»?", "Удаляются только настройки этой вкладки.")
+    assert QApplication.activeWindow() is host  # надписи не открываются отдельными окнами
+
+    def answer():
+        assert QApplication.focusWidget() is dialog.cancel_button
+        QTest.mouseClick(dialog.ok_button, Qt.LeftButton)
+
+    QTimer.singleShot(0, answer)
+    assert dialog.exec_() is True
+    assert QApplication.focusWidget() is before
+
+
+def test_focus_ring_only_from_keyboard(host):
+    """Рамка фокуса — как :focus-visible: после Tab есть, после щелчков мышью нет."""
+    side = W.Button("Настройки", variant="nav", checkable=True)
+    stack = QStackedWidget()
+    page1, page2 = QWidget(), QWidget()
+    title = W.TitleEdit("Документы")
+    QVBoxLayout(page1).addWidget(title)
+    row = W.SwitchRow("Запускать вместе с Windows")
+    reset = W.Button("Сбросить", variant="danger")
+    lay2 = QVBoxLayout(page2)
+    lay2.addWidget(row)
+    lay2.addWidget(reset)
+    stack.addWidget(page1)
+    stack.addWidget(page2)
+    side.clicked.connect(lambda: stack.setCurrentIndex(1))
+    holder = QWidget()
+    lay = QHBoxLayout(holder)
+    lay.addWidget(side)
+    lay.addWidget(stack)
+    show_in(host, holder)
+    QApplication.setActiveWindow(host)
+    pump()
+    focused = QApplication.focusWidget()
+    assert focused is None or not theme.has_keyboard_focus(focused)  # окно только что открыто
+    QTest.mouseClick(title.line_edit, Qt.LeftButton)
+    QTest.mouseClick(side, Qt.LeftButton)  # страница сменилась, Qt сам перевел фокус «по Tab»
+    pump()
+    assert QApplication.focusWidget() is row.switch
+    assert not theme.has_keyboard_focus(row.switch) and row.switch.property("kbfocus") is None
+    QTest.keyClick(row.switch, Qt.Key_Tab)
+    pump()
+    assert QApplication.focusWidget() is reset
+    assert theme.has_keyboard_focus(reset) and reset.property("kbfocus") == "true"
+    QTest.keyClick(reset, Qt.Key_Backtab)
+    pump()
+    assert theme.has_keyboard_focus(row.switch) and reset.property("kbfocus") is None
+    row.switch.grab()
+    QTest.mouseClick(row.switch, Qt.LeftButton)  # щелчок мышью снимает рамку
+    assert not theme.has_keyboard_focus(row.switch)
+    assert '[kbfocus="true"]' in theme.build_stylesheet()
+    assert 'QPushButton:focus' not in theme.build_stylesheet()
+
+
 def test_title_edit(host):
     title = show_in(host, W.TitleEdit("Документы"))
+    host.layout().addWidget(QLineEdit())  # есть куда уйти фокусу
+    QApplication.setActiveWindow(host)  # с активным окном уход фокуса тоже дает editingFinished
+    pump()
     edited, finished = collect(title.text_edited), collect(title.editing_finished)
     assert title.chars() == 11
     title.line_edit.setFocus()
@@ -470,11 +645,19 @@ def test_title_edit(host):
     assert edited[-1] == "Photo" and title.text() == "Photo"
     QTest.keyClick(title.line_edit, Qt.Key_Escape)
     assert title.text() == "Документы"
+    assert finished == ["Документы"]  # Esc сообщает прежнее имя один раз
     title.line_edit.setFocus()
     title.line_edit.selectAll()
     QTest.keyClick(title.line_edit, Qt.Key_Delete)
     QTest.keyClick(title.line_edit, Qt.Key_Return)
-    assert title.text() == "Без названия" and finished[-1] == "Без названия"
+    pump()
+    assert title.text() == "Без названия" and finished == ["Документы", "Без названия"]  # Enter — ровно один раз
+    title.line_edit.setFocus()
+    QTest.keyClicks(title.line_edit, "X")
+    QTest.keyClick(title.line_edit, Qt.Key_Enter)
+    title.line_edit.clearFocus()
+    pump()
+    assert finished[2:] == [title.text()]
     title.set_text("x" * 100)
     assert title.chars() == 48 and edited[-1] != "x" * 100
     title.set_text("ab")
@@ -512,4 +695,9 @@ def test_status_line(host):
     assert line.spinner.isVisible() and line.spinner.is_spinning() and not line.icon_label.isVisible()
     line.set_status("warn", "Не выбрана папка назначения")
     assert line.icon_label.icon_name == "alert" and line.text_label.property("tone") == "warn"
+    host.setFixedWidth(220)
+    pump()
+    line.set_status("warn", "Не выбраны исходные файлы/папки и папка назначения")
+    pump()
+    assert line.text_label.is_elided() and line.text_label.toolTip() == line.text()
     assert line.text_label.palette().color(line.text_label.foregroundRole()).name().upper() == C.WARN

@@ -40,7 +40,9 @@
 
 ## Шрифты
 
-* Golos Text 13px — основной текст (межстрочный 1.4 в многострочном тексте `WrapAnywhereLabel`).
+* Golos Text 13px — основной текст. Межстрочный 1.4 (`theme.LINE_HEIGHT`): у однострочных `QLabel[kind]` QSS
+  задает `min-height` = размер × 1.4 (`theme.line_box()`: 13px → 18, 12px → 17), многострочный текст —
+  `WrapAnywhereLabel` (каждая строка 1.4). Заголовки и подсказки `SwitchRow`/`OptionCheck` — `WrapAnywhereLabel`.
 * Заголовки карточек 13.5px/600, заголовок страницы 18px/600, подписи капителью 11px/600 с разрядкой .06em
   (`CapsLabel`), подсказки 12px `MUTED`.
 * JetBrains Mono — пути: 11px в списке источников, 12px в поле папки и в «Так будет выглядеть копия»,
@@ -48,7 +50,8 @@
 * Начертания Golos регистрируются как **отдельные семейства** («Golos Text», «Golos Text Medium»,
   «Golos Text SemiBold»), поэтому жирность в QSS задается семейством: `theme.qss_font("semibold", 13.5)`,
   в коде рисования — `theme.font("semibold", 13.5)`. Если шрифты не загрузились, роли получают системный шрифт
-  с `font-weight` 500/600 — пишите стили только через эти функции.
+  с `font-weight` 456/504: Qt5 делит вес из QSS на 8, и только так выходят Medium (57) и DemiBold (63), а не
+  DemiBold/Bold — пишите стили только через эти функции.
 * Дробные размеры (12.5px, 13.5px) QSS в px не понимает: `theme.build_stylesheet()` переводит их в pt
   с учетом DPI экрана, `theme.font()` делает то же самое.
 * Файлы — `fonts/` (лицензия SIL OFL 1.1: `OFL-GolosText.txt`, `OFL-JetBrainsMono.txt`), в сборку их добавляет
@@ -63,9 +66,10 @@
 |---|---|
 | `QPushButton[variant]` | нет (обычная), `primary`, `ghost`, `link` (синий текст слева), `danger`, `danger-solid`, `nav` (пункт боковой панели) |
 | `QPushButton[small="true"]`, `[iconOnly="true"]` | 28px, квадратная |
+| `[kbfocus="true"]` | ставит `theme.FocusTracker` сам: фокус пришел с клавиатуры (рамка фокуса). Вручную не задавайте |
 | `QLabel[kind]` | `h1`, `h2`, `h3`, `medium`, `semibold`, `muted`, `muted-sm`, `secondary`, `faint`, `caps`, `count`, `warn`, `danger`, `ok`, `status` (+`tone`), `mono`, `mono-body`, `mono-time`, `badge`, `pill`, `note`, `note-sm`, `empty` |
 | `QFrame[kind]` | `card`, `card-footer`, `divider`, `vdivider`, `side-divider`, `sidebar`, `panel` (белая полоса с линией сверху), `row` (строка списка с линией и подсветкой), `row-plain`, `notice`, `note`, `stepper` |
-| `QLineEdit` | `[readOnly="true"]` — серый фон, `[mono="true"]` — моноширинный 12px, `[small="true"]` — поиск 28px |
+| `QLineEdit` | `[readOnly="true"]` — серый фон, `[mono="true"]` — моноширинный 12px, `[small="true"]` — поиск 30px (`FIELD_HEIGHT_SMALL`) |
 | `QCheckBox[kind="filter"]` | 12.5px `TEXT2` (фильтр истории) |
 | `QWidget[kind="page"]` | фон окна (нужен `WA_StyledBackground`) |
 
@@ -77,9 +81,9 @@
 | `ToggleSwitch` | включение функции (расписание, настройки приложения); `toggled(bool)`, `set_checked_silent()` |
 | `SwitchRow(title, hint, checked, title_kind, top_border)` | строка «заголовок + подсказка … переключатель» |
 | `OptionCheck(text, hint, checked)` | параметр копирования: флажок + полужирная подпись + подсказка, щелчок по строке |
-| `Segmented(options, value)` | выбор одного из 2–4 вариантов (периодичность); `changed(str)` |
+| `Segmented(options, value)` | выбор одного из 2–4 вариантов (периодичность); `changed(str)`; в узкой колонке подписи с «…» |
 | `DayChips(value)` | день недели; `changed(int)`, переносится в узком окне |
-| `MonthdayStepper(value)` | число месяца 1…31 по кругу; `changed(int)` |
+| `MonthdayStepper(value)` | число месяца 1…31 по кругу; `changed(int)`; стрелки и +/− на кнопках — шаг |
 | `Card(title, icon_name, header_divider, header_margins, body_margins)` | любой раздел; `add_header_widget()`, `body_layout`, `add_footer()` |
 | `NoticeBanner(title, text)` | ошибка внутри карточки (отказ добавить папку); `closed` |
 | `Badge(text, "badge"/"pill")` | «действуют только для …», «Следующее копирование: …» |
@@ -88,8 +92,8 @@
 | `GripSplitter(side, main)` | боковая панель 180…440 px (240 по умолчанию) и рабочая область от 380 px |
 | `SidebarTabList` + `TabEntry` | список вкладок со статусом, фильтром, тенями у краев |
 | `Toast(parent)` | короткое сообщение в окне (5 с) вместо `QMessageBox`: отказ расписания, «сброс выполнен» |
-| `OverlayDialog` / `confirm()` | подтверждение удаления и сброса внутри окна |
-| `TitleEdit` | название вкладки, редактируемое на месте |
+| `OverlayDialog` / `confirm()` | подтверждение удаления и сброса внутри окна; после ответа фокус возвращается туда, где был |
+| `TitleEdit` | название вкладки, редактируемое на месте; `editing_finished` — один раз (Enter, Esc или уход фокуса), только если имя изменилось (Esc — всегда) |
 | `StatusLine(tone, text)` | строка под названием вкладки: `run` / `warn` / `ok` / `off` |
 | `FlowLayout`, `label()`, `hline()`, `vline()`, `IconLabel`, `CapsLabel`, `style_menu()` | мелкие помощники |
 
@@ -102,10 +106,22 @@
 * `TitleEdit` и `OptionCheck` в макете выступают влево (margin-left: -8px), чтобы текст стоял по линии
   соседних строк: уменьшайте отступ раскладки на `TitleEdit.TEXT_INSET` (9) и `OptionCheck.INSET` (8).
 * Строка списка: поля 6px 8px 6px 12px, иконка 18px, зазор 10, линия `DIVIDER` сверху.
-* Высоты: кнопки и поля 32 (малые 28), сегменты 28 в подложке 32, дни 34×28, переключатель 38×22,
+* Высоты: кнопки и поля 32, малые кнопки 28, поле поиска 30, сегменты 28 в подложке 32, дни 34×28, переключатель 38×22,
   полоска хода 6, строка состояния от 40.
 * Скругления: карточка 8, поле и кнопка 6, сегмент и день 5, плашки 6, тост и модальное окно 10,
   «таблетка» 9 (Qt не рисует скругление больше половины высоты — тогда угол становится прямым).
+
+## Фокус
+
+Рамка фокуса — только при работе с клавиатуры, как `:focus-visible` макета. `theme.apply()` ставит фильтр
+`FocusTracker`: виджет, получивший фокус клавишей (Tab, Shift+Tab, сочетание, стрелки), получает свойство
+`kbfocus="true"`, щелчок мышью и уход фокуса его снимают. В QSS рамку кнопок задавайте селектором
+`[kbfocus="true"]`, а не `:focus`; в своем `paintEvent` проверяйте `theme.has_keyboard_focus(self)`, в своем
+`focusInEvent` — `theme.keyboard_focus_reason(event.reason())`. Поля ввода (`QLineEdit`) подсвечиваются при любом
+фокусе (`:focus`), как в браузере.
+
+Виджет без родителя не показывайте (`setVisible(True)`, `show()`): Qt откроет его отдельным окном. Скрывайте и
+показывайте надписи после того, как они добавлены в раскладку.
 
 ## Как добавить новый блок в том же стиле
 

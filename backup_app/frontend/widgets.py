@@ -12,15 +12,16 @@ from PyQt5.QtCore import (QElapsedTimer, QEasingCurve, QEvent, QEventLoop, QMode
                           pyqtProperty, pyqtSignal)
 from PyQt5.QtGui import (QColor, QFontMetrics, QFontMetricsF, QIcon, QPainter, QPalette, QPen, QRadialGradient,
                          QStandardItem, QStandardItemModel, QTextCharFormat, QTextLayout, QTextOption)
-from PyQt5.QtWidgets import (QAbstractButton, QAbstractItemView, QButtonGroup, QCheckBox, QFrame,
+from PyQt5 import sip
+from PyQt5.QtWidgets import (QAbstractButton, QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QFrame,
                              QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QLayout, QLineEdit, QListView,
                              QProgressBar, QPushButton, QSizePolicy, QSplitter, QSplitterHandle, QStyle,
                              QStyledItemDelegate, QStyleOptionButton, QStyleOptionFrame, QStylePainter, QVBoxLayout,
                              QWidget, QWidgetItem)
 
 from . import icons
-from .theme import (BUTTON_HEIGHT, BUTTON_HEIGHT_SMALL, C, faded, font, mix, px_to_pt,
-                    set_props)
+from .theme import (BUTTON_HEIGHT, BUTTON_HEIGHT_SMALL, C, faded, font, has_keyboard_focus, keyboard_focus_reason,
+                    mix, px_to_pt, set_props)
 
 DAY_SHORT = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
 DAY_FULL = ("Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье")
@@ -192,6 +193,13 @@ class ElidedLabel(QLabel):
         super().setText(text)
         self.updateGeometry()
         self.update()
+        self._sync_tooltip()  # если ширина не изменится, resizeEvent не придет
+
+    def _sync_tooltip(self) -> None:
+        if self._auto_tooltip:
+            tip = self.text() if self.is_elided() else ""
+            if self.toolTip() != tip:
+                self.setToolTip(tip)
 
     def is_elided(self) -> bool:
         width = self.contentsRect().width()
@@ -207,8 +215,12 @@ class ElidedLabel(QLabel):
 
     def resizeEvent(self, event):  # noqa: N802
         super().resizeEvent(event)
-        if self._auto_tooltip:
-            self.setToolTip(self.text() if self.is_elided() else "")
+        self._sync_tooltip()
+
+    def changeEvent(self, event):  # noqa: N802
+        super().changeEvent(event)
+        if event.type() in (QEvent.FontChange, QEvent.StyleChange, QEvent.ContentsRectChange):
+            self._sync_tooltip()
 
     def paintEvent(self, event):  # noqa: N802
         painter = QPainter(self)
@@ -302,7 +314,9 @@ class WrapAnywhereLabel(QFrame):
 
     def heightForWidth(self, width):  # noqa: N802
         mw, mh = self._margins()
-        return math.ceil(self._layout(width - mw)[1]) + mh
+        height = self._layout(width - mw)[1]
+        # с межстрочным 1.4 строки уже с запасом: округляем, как CSS (18.2 + 16.8 = 35, а не 19 + 17)
+        return (int(height + 0.5) if self._line_height else math.ceil(height)) + mh
 
     def sizeHint(self):  # noqa: N802
         mw, _ = self._margins()
@@ -340,6 +354,7 @@ class Button(QPushButton):
                  checkable: bool = False, parent=None):
         super().__init__(text, parent)
         self._elide = elide
+        self._base_tip = tooltip or ""
         self._icon_name, self._icon_color, self._icon_stroke = None, icon_color, None
         self._icon_size = icon_size or (15 if not icon_only else 16)
         self._variant = variant
@@ -410,6 +425,14 @@ class Button(QPushButton):
         super().setText(text)
         self.updateGeometry()
         self.update()
+        self._sync_tooltip()
+
+    def _sync_tooltip(self) -> None:
+        """elide=True: полный текст в подсказке, пока он обрезан (иначе — подсказка из конструктора)."""
+        if self._elide:
+            tip = self.text() if self.is_elided() else self._base_tip
+            if self.toolTip() != tip:
+                self.setToolTip(tip)
 
     # --- размеры: Qt ставит между иконкой и текстом 4px, у нас 6 (10 у nav)
     def sizeHint(self):  # noqa: N802
@@ -443,10 +466,22 @@ class Button(QPushButton):
 
     def resizeEvent(self, event):  # noqa: N802
         super().resizeEvent(event)
-        if self._elide:
-            self.setToolTip(self.text() if self.is_elided() else "")
+        self._sync_tooltip()
+
+    def changeEvent(self, event):  # noqa: N802
+        super().changeEvent(event)
+        if event.type() in (QEvent.FontChange, QEvent.StyleChange):
+            self._sync_tooltip()
 
     def paintEvent(self, event):  # noqa: N802
+        if self._elide and self.icon().isNull() and not self._icon_only and self.text():
+            # без иконки: обычная отрисовка стилем, но с текстом «…» (QSS задает выравнивание и поля)
+            painter = QStylePainter(self)
+            option = QStyleOptionButton()
+            self.initStyleOption(option)
+            option.text = self._shown_text(self._content_rect(option))
+            painter.drawControl(QStyle.CE_PushButton, option)
+            return
         if self.icon().isNull() or self._icon_only or not self.text():
             super().paintEvent(event)
             return
@@ -545,7 +580,7 @@ class ToggleSwitch(QAbstractButton):
             p.drawEllipse(QRectF(x - spread / 2, 3 + 1 - spread / 2, self.KNOB + spread, self.KNOB + spread))
         p.setBrush(QColor(C.WHITE))
         p.drawEllipse(QRectF(x, 3, self.KNOB, self.KNOB))
-        if self.hasFocus():
+        if has_keyboard_focus(self):
             p.setPen(QPen(QColor("#0B2F75" if self.isChecked() else C.ACCENT), 1.5))
             p.setBrush(Qt.NoBrush)
             p.drawRoundedRect(QRectF(0.75, 0.75, self.WIDTH - 1.5, self.HEIGHT - 1.5), 10.25, 10.25)
@@ -555,6 +590,7 @@ class Segmented(QFrame):
     """Сегменты «Ежедневно | Еженедельно | Ежемесячно»: фон #EEF1F5, выбранный — белый с обводкой.
 
     options — [(ключ, подпись), ...]. Сигнал changed(str) — только от пользователя.
+    В узкой колонке подписи сокращаются с «…» (полный текст — в подсказке), как .seg в макете.
     """
 
     changed = pyqtSignal(str)
@@ -571,11 +607,8 @@ class Segmented(QFrame):
         self._buttons = {}
         self._keys: List[str] = []
         for key, text in options:
-            b = QPushButton(text)
+            b = Button(text, elide=True, checkable=True)
             b.setProperty("kind", "seg")
-            b.setCheckable(True)
-            b.setFocusPolicy(Qt.TabFocus)
-            b.setCursor(Qt.PointingHandCursor)
             b.setFixedHeight(28)
             b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             b.setMinimumWidth(40)
@@ -703,6 +736,9 @@ class MonthdayStepper(QFrame):
         lay.addWidget(self.up_button)
         self.down_button.clicked.connect(lambda: self.step(-1))
         self.up_button.clicked.connect(lambda: self.step(1))
+        # стрелки обрабатывают сами кнопки (переход фокуса), поэтому клавиши перехватываются фильтром
+        self.down_button.installEventFilter(self)
+        self.up_button.installEventFilter(self)
         self._value = self.MIN
         self.set_value(value)
 
@@ -722,11 +758,21 @@ class MonthdayStepper(QFrame):
         span = self.MAX - self.MIN + 1
         self.set_value((self._value - self.MIN + delta) % span + self.MIN, emit=True)
 
+    _KEY_STEPS = {Qt.Key_Up: 1, Qt.Key_Right: 1, Qt.Key_Plus: 1,
+                  Qt.Key_Down: -1, Qt.Key_Left: -1, Qt.Key_Minus: -1}
+
+    def eventFilter(self, obj, event):  # noqa: N802
+        if event.type() == QEvent.KeyPress and obj in (self.down_button, self.up_button):
+            delta = self._KEY_STEPS.get(event.key())
+            if delta:
+                self.step(delta)
+                return True
+        return super().eventFilter(obj, event)
+
     def keyPressEvent(self, event):  # noqa: N802
-        if event.key() in (Qt.Key_Up, Qt.Key_Right, Qt.Key_Plus):
-            self.step(1)
-        elif event.key() in (Qt.Key_Down, Qt.Key_Left, Qt.Key_Minus):
-            self.step(-1)
+        delta = self._KEY_STEPS.get(event.key())
+        if delta:
+            self.step(delta)
         else:
             super().keyPressEvent(event)
 
@@ -750,12 +796,17 @@ class SwitchRow(QFrame):
         text = QVBoxLayout()
         text.setContentsMargins(0, 0, 0, 0)
         text.setSpacing(0)
-        self.title_label = label(title, title_kind, wrap=True)
-        self.hint_label = label(hint, "muted", wrap=True)
-        self.hint_label.setVisible(bool(hint))
+        # строки по 1.4 высоты шрифта, как в макете; растяжки держат текст по центру строки (align-items: center)
+        self.title_label = WrapAnywhereLabel(title, title_kind)
+        self.hint_label = WrapAnywhereLabel(hint, "muted")
+        text.addStretch(1)
         text.addWidget(self.title_label)
         text.addWidget(self.hint_label)
+        text.addStretch(1)
         lay.addLayout(text, 1)
+        # скрывать/показывать только после того, как у надписи есть родитель: setVisible(True) у виджета
+        # без родителя открывает его отдельным окном
+        self.hint_label.setVisible(bool(hint))
         self.switch = ToggleSwitch(checked, accessible_name=title)
         lay.addWidget(self.switch, 0, Qt.AlignVCenter)
         self.switch.toggled.connect(self.toggled)
@@ -810,12 +861,13 @@ class OptionCheck(QWidget):
         col = QVBoxLayout()
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(0)
-        self.text_label = label(text, "medium", wrap=True)
-        self.hint_label = label(hint, "muted", wrap=True)
-        self.hint_label.setVisible(bool(hint))
+        self.text_label = WrapAnywhereLabel(text, "medium")
+        self.hint_label = WrapAnywhereLabel(hint, "muted")
         col.addWidget(self.text_label)
         col.addWidget(self.hint_label)
+        col.addStretch(1)  # лишняя высота — под текстом (align-items: flex-start)
         lay.addLayout(col, 1)
+        self.hint_label.setVisible(bool(hint))  # после addLayout: у надписи уже есть родитель
         self.checkbox.toggled.connect(self.toggled)
 
     def isChecked(self) -> bool:  # noqa: N802
@@ -1184,7 +1236,7 @@ class GripHandle(QSplitterHandle):
             super().keyPressEvent(event)
 
     def is_active(self) -> bool:
-        return self.hovered or self.pressed or self.hasFocus()
+        return self.hovered or self.pressed or has_keyboard_focus(self)
 
     def paintEvent(self, event):  # noqa: N802
         p = QPainter(self)
@@ -1584,7 +1636,7 @@ class SidebarTabList(QListView):
         return self._top.isVisibleTo(self), self._bottom.isVisibleTo(self)
 
     def focusInEvent(self, event):  # noqa: N802
-        self.keyboard_focus = event.reason() in (Qt.TabFocusReason, Qt.BacktabFocusReason, Qt.ShortcutFocusReason)
+        self.keyboard_focus = keyboard_focus_reason(event.reason())
         super().focusInEvent(event)
 
     def mousePressEvent(self, event):  # noqa: N802
@@ -1734,6 +1786,8 @@ class OverlayDialog(QWidget):
         self.setAttribute(Qt.WA_StyledBackground, False)
         self.result_: Optional[bool] = None
         self._loop: Optional[QEventLoop] = None
+        self._return_focus: Optional[QWidget] = None
+        self._return_keyboard = False
         self.title_text, self.body_text = title, text
         self.card = QFrame(self)
         self.card.setProperty("kind", "dialog")
@@ -1743,9 +1797,9 @@ class OverlayDialog(QWidget):
         lay.setSpacing(8)
         self.title_label = WrapAnywhereLabel(title, kind="dialog-title")
         self.text_label = WrapAnywhereLabel(text, kind="dialog-text")
-        self.text_label.setVisible(bool(text))
         lay.addWidget(self.title_label)
         lay.addWidget(self.text_label)
+        self.text_label.setVisible(bool(text))  # после addWidget: без родителя надпись открылась бы окном
         buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 8, 0, 0)
         buttons.setSpacing(8)
@@ -1769,6 +1823,10 @@ class OverlayDialog(QWidget):
     # --- показ
     def open(self) -> None:  # noqa: A003 - как QDialog.open
         parent = self.parentWidget()
+        focused = QApplication.focusWidget()
+        if focused is not None and focused is not self and not self.isAncestorOf(focused):
+            # после ответа фокус вернется сюда (как у QDialog), иначе он пропадает
+            self._return_focus, self._return_keyboard = focused, has_keyboard_focus(focused)
         self.setGeometry(parent.rect())
         self._place_card()
         self.show()
@@ -1800,10 +1858,17 @@ class OverlayDialog(QWidget):
         if self.result_ is not None and not self.isVisible():
             return
         self.result_ = result
+        self._restore_focus()  # до hide(): иначе Qt сам переведет фокус на следующий виджет окна
         self.hide()
         self.finished.emit(result)
         if self._loop is not None:
             self._loop.quit()
+
+    def _restore_focus(self) -> None:
+        widget, self._return_focus = self._return_focus, None
+        if widget is None or sip.isdeleted(widget) or not widget.isVisible() or not widget.isEnabled():
+            return
+        widget.setFocus(Qt.TabFocusReason if self._return_keyboard else Qt.OtherFocusReason)
 
     # --- раскладка и клавиатура
     def _place_card(self) -> None:
@@ -1892,8 +1957,8 @@ class TitleEdit(QWidget):
     """Название вкладки, редактируемое на месте: 18px/600, рамка только при наведении/фокусе, карандаш.
 
     Ширина поля — по тексту (как size="len+2" в макете, 6…48 знаков). Сигналы: text_edited(str) — каждое
-    изменение; editing_finished(str) — по Enter/уходу фокуса; пустое имя заменяется на empty_text.
-    Esc возвращает прежнее имя.
+    изменение; editing_finished(str) — один раз по Enter, Esc или уходу фокуса, если имя изменилось
+    (Esc — всегда, с прежним именем); пустое имя заменяется на empty_text. Esc возвращает прежнее имя.
 
     Текст начинается на TEXT_INSET px правее левого края (рамка + поля): в макете поле сдвинуто влево
     (margin-left: -8px), чтобы текст стоял ровно над строкой состояния, — уменьшите левый отступ раскладки.
@@ -1949,12 +2014,14 @@ class TitleEdit(QWidget):
         self._fit()
         self.text_edited.emit(text)
 
-    def _finished(self) -> None:
+    def _finished(self, force: bool = False) -> None:
         text = self.line_edit.text()
         if not text.strip():
             text = self.empty_text
             self.line_edit.setText(text)
             self._fit()
+        elif not force and text == self._before:
+            return  # уже сообщено (Enter, затем уход фокуса) или имя не менялось
         self._before = text
         self.line_edit.setToolTip(text)
         self.editing_finished.emit(text)
@@ -1983,11 +2050,14 @@ class TitleEdit(QWidget):
                 self.line_edit.setText(self._before)
                 self._fit()
                 self.text_edited.emit(self._before)
+                self._finished(force=True)
                 self.line_edit.clearFocus()
                 return True
             if event.type() == QEvent.KeyPress and event.key() in (Qt.Key_Return, Qt.Key_Enter):
+                # сообщаем сами и не отдаем Enter полю: иначе editingFinished придет дважды (Enter + уход фокуса)
+                self._finished()
                 self.line_edit.clearFocus()
-                return False
+                return True
             if event.type() in (QEvent.FontChange, QEvent.StyleChange, QEvent.Polish):
                 QTimer.singleShot(0, self._fit)
         return False
