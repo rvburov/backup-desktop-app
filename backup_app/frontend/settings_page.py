@@ -86,6 +86,10 @@ class SettingsPage(QWidget):
         h_lay.add(W.IconLabel("shield-plain", C.TEXT2, 16))
         h_lay.add(W.label("Безопасность", "h2"))
         h_lay.add_spacer()
+        # В макете карточка начинается с дробного края (348.5 px), и Chromium рисует строку заголовка
+        # (18.9 px) высотой 18, а пояснение (68.4 px) — высотой 69: поле и пояснение стоят на 1 px выше,
+        # чем при целых 19 и 68. Высота карточки та же.
+        header.setFixedHeight(18)
         lay.addWidget(header)
         size_row = QWidget()
         s_lay = W.FlexRow(size_row, hgap=12, vgap=8)
@@ -99,7 +103,9 @@ class SettingsPage(QWidget):
         s_lay.add(self.max_size_spin)
         s_lay.add_spacer()
         lay.addWidget(size_row)
-        lay.addWidget(W.WrapAnywhereLabel(SECURITY_HINT.format(max_path=MAX_PATH_LENGTH, tag=SECURITY_TAG), "note-sm"))
+        note = W.WrapAnywhereLabel(SECURITY_HINT.format(max_path=MAX_PATH_LENGTH, tag=SECURITY_TAG), "note-sm")
+        note.setStyleSheet("padding-bottom: 10px;")  # 68.4 px макета → 69 (см. выше)
+        lay.addWidget(note)
         root.addWidget(card)
 
         # Сброс

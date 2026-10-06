@@ -33,9 +33,12 @@ def split_icon(text: str) -> Tuple[str, str]:
 
 
 class HistoryModel(QAbstractListModel):
+    """Записи истории. revision растет при каждом изменении набора строк (ключ кэша высот строк)."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.entries: List[HistoryEntry] = []
+        self.revision = 0
 
     def rowCount(self, parent=QModelIndex()):  # noqa: N802
         return 0 if parent.isValid() else len(self.entries)
@@ -53,12 +56,14 @@ class HistoryModel(QAbstractListModel):
     def set_entries(self, entries: Sequence[HistoryEntry]) -> None:
         self.beginResetModel()
         self.entries = list(entries)
+        self.revision += 1
         self.endResetModel()
 
     def append(self, entry: HistoryEntry) -> None:
         row = len(self.entries)
         self.beginInsertRows(QModelIndex(), row, row)
         self.entries.append(entry)
+        self.revision += 1
         self.endInsertRows()
 
     def drop_first(self, count: int) -> None:
@@ -66,11 +71,16 @@ class HistoryModel(QAbstractListModel):
             return
         self.beginRemoveRows(QModelIndex(), 0, count - 1)
         del self.entries[:count]
+        self.revision += 1
         self.endRemoveRows()
 
 
 class HistoryDelegate(QStyledItemDelegate):
     """Рисует запись: поля 3px 14px, время 116 px, значок 14 px, текст и подробности с переносом.
+
+    Высоты строк дробные, как в браузере (однострочная — 3 + 12.5 × 1.4 + 3 = 23.5 px): края строк —
+    округленные точные края строк макета от начала списка (как у списка вкладок), строки по 23 и 24 px.
+    Прокрутка в браузере целая, поэтому и у прокрученного к концу списка строки стоят как в макете.
 
     Кэши ключуются самой записью (HistoryEntry неизменяема и сравнивается по значению), а не id():
     после удаления старых записей id может достаться новой записи. Высота строки, которая
@@ -88,14 +98,16 @@ class HistoryDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._natural = {}   # запись → (значок, текст, ширина текста, ширины подробностей): от ширины не зависит
-        self._heights = {}   # (запись, ширина) → высота строки
+        self._heights = {}   # (запись, ширина) → точная (дробная) высота строки
         self._layouts = {}   # (запись, ширина) → раскладка для рисования (только видимые строки)
         self._steps = None
+        self._tops = None    # ((ширина, ревизия модели, строк), округленные верхи строк)
 
     def clear_cache(self) -> None:
         """Забыть высоты и раскладки (ширина изменилась)."""
         self._heights = {}
         self._layouts = {}
+        self._tops = None
 
     def forget(self) -> None:
         """Забыть все (новый набор записей)."""
@@ -117,7 +129,7 @@ class HistoryDelegate(QStyledItemDelegate):
         layout.setTextOption(option)
         metrics = QFontMetricsF(f)
         step = max(metrics.height(), px * 1.4)
-        lead = (step - metrics.height()) / 2
+        lead = W.half_leading(step, metrics.height())   # как в Chromium: целые px, округление вниз
         layout.beginLayout()
         y = 0.0
         while True:
@@ -145,7 +157,8 @@ class HistoryDelegate(QStyledItemDelegate):
     def _text_width(self, width: int) -> int:
         return max(40, width - self.TEXT_X - self.PAD_X)
 
-    def row_height(self, entry: HistoryEntry, width: int) -> int:
+    def entry_height(self, entry: HistoryEntry, width: int) -> float:
+        """Точная высота строки записи в макете (дробная: 23.5 px у однострочной)."""
         key = (entry, width)
         height = self._heights.get(key)
         if height is None:
@@ -153,13 +166,29 @@ class HistoryDelegate(QStyledItemDelegate):
             text_w = self._text_width(width) - 1
             if head_w <= text_w and all(w <= text_w for w in detail_ws):
                 head_step, detail_step = self._line_steps()   # все в одну строку: раскладка не нужна
-                height = int(self.PAD_Y * 2 + head_step + detail_step * len(detail_ws) + 0.5)
+                height = self.PAD_Y * 2 + head_step + detail_step * len(detail_ws)
             else:
                 height = self._parts(entry, width)[4]
             if len(self._heights) > self.CACHE_LIMIT:
                 self._heights = {}
             self._heights[key] = height
         return height
+
+    def tops(self, model: "HistoryModel", width: int) -> List[int]:
+        """Верхи строк от начала списка: округленные суммы точных высот (длина — строк + 1, последний — низ)."""
+        key = (width, model.revision, len(model.entries))
+        if self._tops is None or self._tops[0] != key:
+            tops, total = [0], 0.0
+            for entry in model.entries:
+                total += self.entry_height(entry, width)
+                tops.append(int(total + 0.5))
+            self._tops = (key, tops)
+        return self._tops[1]
+
+    def row_height(self, model: "HistoryModel", row: int, width: int) -> int:
+        """Высота строки row в пикселях (23 или 24 у однострочных, см. tops)."""
+        tops = self.tops(model, width)
+        return tops[row + 1] - tops[row]
 
     def _parts(self, entry: HistoryEntry, width: int):
         key = (entry, width)
@@ -171,16 +200,18 @@ class HistoryDelegate(QStyledItemDelegate):
         head, head_h = self._layout(text, self.HEAD_PX, "regular", text_w)
         details = [self._layout(detail, self.DETAIL_PX, "regular", text_w) for detail in entry.details]
         height = self.PAD_Y * 2 + head_h + sum(h for _l, h in details)
-        result = (icon, head, head_h, details, int(height + 0.5))
+        result = (icon, head, head_h, details, height)
         if len(self._layouts) > self.LAYOUT_LIMIT:
             self._layouts = {}
         self._layouts[key] = result
         return result
 
     def sizeHint(self, option, index):  # noqa: N802
-        entry = index.data(Qt.UserRole)
         width = option.rect.width() or 600
-        return QSize(width, self.row_height(entry, width))
+        model = index.model()
+        if isinstance(model, HistoryModel) and 0 <= index.row() < len(model.entries):
+            return QSize(width, self.row_height(model, index.row(), width))
+        return QSize(width, int(self.entry_height(index.data(Qt.UserRole), width) + 0.5))
 
     def paint(self, p, option, index):
         entry = index.data(Qt.UserRole)
@@ -189,7 +220,7 @@ class HistoryDelegate(QStyledItemDelegate):
         color = QColor(ICON_COLORS.get(icon, C.TEXT2))
         p.save()
         p.setClipRect(r)  # пока ширина меняется, высота строки может отставать от раскладки
-        top = r.top() + self.PAD_Y
+        top = r.top() + self.PAD_Y   # текст — от округленного верха строки (как и в браузере)
         line_h = 12.5 * 1.4
         p.setFont(font("mono", 11.5))
         p.setPen(QColor(C.MUTED))
@@ -239,12 +270,12 @@ class HistoryView(QListView):
     def content_height(self, limit: int = MAX_LIST_HEIGHT) -> int:
         """Высота записей (с конца), пока не превысит limit."""
         width = self.viewport().width() or self.width() or 600
-        total = 0
-        for entry in reversed(self.model_.entries):
-            total += self.delegate.row_height(entry, width)
-            if total >= limit:
-                break
-        return total
+        tops = self.delegate.tops(self.model_, width)
+        bottom = tops[-1]
+        for top in reversed(tops):
+            if bottom - top >= limit:
+                return bottom - top
+        return bottom
 
     def fit_height(self) -> None:
         self.setFixedHeight(min(MAX_LIST_HEIGHT, self.content_height() + 8))

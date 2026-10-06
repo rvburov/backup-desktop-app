@@ -121,11 +121,12 @@ def test_read_missing_file(tmp_path):
     assert ini.read_ini(str(tmp_path / "nope.ini")) == {}
 
 
-def test_cross_check_with_qsettings(tmp_path):
+def test_cross_check_with_qsettings(tmp_path, request):
     """Файл, записанный QSettings, читается нами, а записанный нами читается QSettings."""
     qt_core = pytest.importorskip("PyQt5.QtCore")
-    app = qt_core.QCoreApplication.instance() or qt_core.QCoreApplication([])
-    assert app is not None
+    # общий QApplication прогона, а не свой QCoreApplication: удаление своего выключило бы в PyQt5
+    # слежение за удалением объектов Qt до конца прогона (см. qapp в conftest.py)
+    assert request.getfixturevalue("qapp") is qt_core.QCoreApplication.instance()
     # Символы вне BMP Qt 5 сам записывает с ошибкой, поэтому в сверке их нет.
     items = [item for item in TRICKY if item and "\0" not in item and max(map(ord, item)) <= 0xFFFF]
     values = {"items": items, "one": ["C:/Папка"], "text": "C:" + BS + "x, y", "at": "@x"}

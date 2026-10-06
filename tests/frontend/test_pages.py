@@ -176,7 +176,31 @@ def test_history_rows_follow_width_after_resize(themed):
     assert rect.height() > one_line            # длинная запись перенеслась
     assert rect.width() == view.viewport().width()
     assert view.visualRect(view.model_.index(0, 0)).height() == view.delegate.row_height(
-        view.model_.entries[0], rect.width())
+        view.model_, 0, rect.width())
+    panel.deleteLater()
+
+
+def test_history_rows_have_fractional_pitch_like_the_mockup(themed):
+    # однострочная запись в макете 3 + 12.5 × 1.4 + 3 = 23.5 px: края строк — округленные точные края
+    # (строки по 23 и 24 px), а не 24 px каждая, иначе нижние строки уезжают от макета
+    from PyQt5.QtTest import QTest
+    from backup_app.frontend import history_panel
+    panel = HistoryPanel()
+    panel.set_entries([HistoryEntry(datetime(2026, 10, 5, 9, i), f"Запись {i}") for i in range(10)])
+    panel.resize(1100, 300)
+    panel.show()
+    QTest.qWait(history_panel.RELAYOUT_MS + 80)
+    view, width = panel.view, panel.view.viewport().width()
+    exact = view.delegate.entry_height(view.model_.entries[0], width)
+    assert exact == pytest.approx(23.5, abs=0.01)
+    tops = view.delegate.tops(view.model_, width)
+    assert tops == [int(exact * row + 0.5) for row in range(11)]
+    heights = [view.delegate.row_height(view.model_, row, width) for row in range(10)]
+    assert set(heights) == {23, 24} and sum(heights) == tops[-1]
+    assert view.content_height(10_000) == tops[-1]
+    # новая запись меняет ключ кэша (ревизию модели): высоты пересчитываются для 11 строк
+    panel.add_entry(HistoryEntry(datetime(2026, 10, 5, 10, 0), "Еще одна"))
+    assert len(view.delegate.tops(view.model_, width)) == 12
     panel.deleteLater()
 
 

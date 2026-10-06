@@ -57,6 +57,24 @@ def label(text: str = "", kind: Optional[str] = None, wrap: bool = False, parent
     return w
 
 
+def elided(metrics, text: str, width: float) -> str:
+    """Текст, сокращенный справа до width px с «…», как text-overflow: ellipsis в макете.
+
+    Qt оставляет пробел перед «…» («Очень длинное название …»), макет — нет: пробелы в конце
+    обрезанной части убираются («Очень длинное название…»). metrics — QFontMetrics или QFontMetricsF.
+    """
+    shown = metrics.elidedText(text, Qt.ElideRight, width)
+    if shown != text and shown.endswith("…"):
+        shown = shown[:-1].rstrip() + "…"
+    return shown
+
+
+def half_leading(line_height: float, font_height: float) -> int:
+    """Отступ текста от верха строки высотой line_height, как в Chromium (LayoutNG): половина разницы
+    высоты строки и шрифта, округленная ВНИЗ до целых px (у 12px: (16.8 − 15) / 2 = 0.9 → 0)."""
+    return max(0, math.floor((line_height - font_height) / 2 + 1e-6))
+
+
 def exact_width_delta(f: QFont, text: str) -> int:
     """На сколько px текст шрифта f (дробный размер, Qt5 рисует его целым) шире, чем в макете.
 
@@ -441,7 +459,7 @@ class ElidedLabel(QLabel):
         return self._metrics().horizontalAdvance(self.text()) > width
 
     def elided_text(self) -> str:
-        return self._metrics().elidedText(self.text(), Qt.ElideRight, max(0, self.contentsRect().width()))
+        return elided(self._metrics(), self.text(), max(0, self.contentsRect().width()))
 
     def sizeHint(self):  # noqa: N802
         # ширина — текст (как у дробного размера макета) плюс поля QSS, без запаса, который добавляет QLabel
@@ -548,7 +566,7 @@ class WrapAnywhereLabel(QFrame):
         px = self.font().pixelSize() if self.font().pixelSize() > 0 else self.font().pointSizeF() / px_to_pt(1)
         if self._line_height:
             step = max(step, px * self._line_height)
-        lead = (step - metrics.height()) / 2
+        lead = half_leading(step, metrics.height())
         layout.beginLayout()
         y = 0.0
         while True:
@@ -586,6 +604,63 @@ class WrapAnywhereLabel(QFrame):
         rect = self.contentsRect()
         painter.setPen(self.palette().color(self.foregroundRole()))
         self._layout(rect.width())[0].draw(painter, QPointF(rect.x(), rect.y()))
+
+
+class EmptyNote(WrapAnywhereLabel):
+    """Пустой список («Список пуст. Добавьте…»): текст по центру в рамке border: 1.5px dashed, радиус 8.
+
+    Рамку QSS (dashed) Qt рисует точками и бледно, а у скругленной рамки нижний край выходит двойным,
+    поэтому штриховую рамку рисуем сами, как Chromium: толщина 1.5px, округленная вниз до целых
+    пикселей экрана (при 100 % — 1px полного цвета), штрих 3 толщины, промежуток около 2 толщин,
+    подобранный так, чтобы каждая сторона начиналась и кончалась штрихом; скругления — сплошные.
+    QSS оставляет прозрачную рамку 1px (ее место) и поля.
+    """
+
+    BORDER_PX = 1.5
+    RADIUS = 8.0
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(text, "empty", parent)
+        self.set_alignment(Qt.AlignHCenter)
+
+    def border_width(self) -> float:
+        """Толщина рамки в px окна: 1.5px макета, округленные вниз до пикселей экрана (не меньше одного)."""
+        ratio = max(1.0, self.devicePixelRatioF())
+        return max(1, math.floor(self.BORDER_PX * ratio + 1e-6)) / ratio
+
+    @staticmethod
+    def _dashes(length: float, dash: float, gap: float) -> List[Tuple[float, float]]:
+        """Штрихи (начало, длина) на отрезке length: первый и последний — у концов, промежутки равные."""
+        if length <= dash:
+            return [(0.0, max(0.0, length))]
+        count = max(2, round((length + gap) / (dash + gap)))
+        step = (length - dash) / (count - 1)
+        return [(i * step, dash) for i in range(count)]
+
+    def paintEvent(self, event):  # noqa: N802
+        super().paintEvent(event)
+        w = self.border_width()
+        rect = QRectF(self.rect()).adjusted(w / 2, w / 2, -w / 2, -w / 2)
+        radius = max(0.0, min(self.RADIUS - w / 2, rect.width() / 2, rect.height() / 2))
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        pen = QPen(QColor(C.INPUT), w)
+        pen.setCapStyle(Qt.FlatCap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        d = 2 * radius
+        left, top, right, bottom = rect.left(), rect.top(), rect.right(), rect.bottom()
+        for x, y, start in ((left, top, 90), (right - d, top, 0), (right - d, bottom - d, 270),
+                            (left, bottom - d, 180)):
+            painter.drawArc(QRectF(x, y, d, d), start * 16, 90 * 16)
+        dash, gap = 3 * w, 2 * w
+        for x0, y0, dx, dy, length in ((left + radius, top, 1, 0, rect.width() - d),
+                                       (left + radius, bottom, 1, 0, rect.width() - d),
+                                       (left, top + radius, 0, 1, rect.height() - d),
+                                       (right, top + radius, 0, 1, rect.height() - d)):
+            for start, size in self._dashes(length, dash, gap):
+                a = QPointF(x0 + dx * start, y0 + dy * start)
+                painter.drawLine(a, QPointF(a.x() + dx * size, a.y() + dy * size))
 
 
 # =========================================================================== кнопки
@@ -722,7 +797,7 @@ class Button(QPushButton):
         width = rect.width()
         if not self.icon().isNull():
             width -= self.iconSize().width() + self.icon_gap()
-        return QFontMetrics(exact(self.font())).elidedText(self.text(), Qt.ElideRight, max(10, width))
+        return elided(QFontMetrics(exact(self.font())), self.text(), max(10, width))
 
     def resizeEvent(self, event):  # noqa: N802
         super().resizeEvent(event)
@@ -876,6 +951,7 @@ class Segmented(QFrame):
             self._group.addButton(b)
             self._buttons[key] = b
             self._keys.append(key)
+        self._group.buttonToggled.connect(lambda *_: self.update())  # обводка — за выбранным сегментом
         self._value = None
         self.set_value(value if value is not None else self._keys[0])
 
@@ -915,6 +991,36 @@ class Segmented(QFrame):
         if event.type() in (QEvent.LayoutRequest, QEvent.Polish, QEvent.StyleChange):
             self._place()
         return super().event(event)
+
+    # тень выбранного сегмента (0 1px 2px rgba(20,32,52,.12)): размытие ~ полосы с прозрачностью
+    # гауссова края (sigma 1px) — (расширение рамки, альфа)
+    SHADOW_LAYERS = ((1.0, 0.029), (0.0, 0.046), (-1.0, 0.037))
+
+    def paintEvent(self, event):  # noqa: N802
+        """Фон из QSS, затем выбранный сегмент: обводка 1px СНАРУЖИ его 28px, тень и белая заливка, как в макете
+        (box-shadow: 0 0 0 1px #D3DAE3, 0 1px 2px rgba(20,32,52,.12)). Заливку рисуем здесь, а не QSS кнопки:
+        QSS со скруглением заливает крайний ряд пикселей наполовину, и сквозь него видна обводка."""
+        super().paintEvent(event)
+        button = self._buttons.get(self._value)
+        if button is None or not button.isChecked() or not button.isVisible():
+            return
+        box = QRectF(button.geometry())
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(C.RING))
+        painter.drawRoundedRect(box.adjusted(-1, -1, 1, 1), 6, 6)
+        outside = QPainterPath()
+        outside.addRect(QRectF(self.rect()))
+        inside = QPainterPath()
+        inside.addRoundedRect(box, 5, 5)
+        painter.setClipPath(outside.subtracted(inside))
+        for grow, alpha in self.SHADOW_LAYERS:
+            painter.setBrush(QColor(20, 32, 52, round(255 * alpha)))
+            painter.drawRoundedRect(box.translated(0, 1).adjusted(-grow, -grow, grow, grow), 5 + grow, 5 + grow)
+        painter.setClipping(False)
+        painter.setBrush(QColor(C.CARD))
+        painter.drawRoundedRect(box, 5, 5)
 
     def _pick(self, key: str) -> None:
         if key != self._value:
@@ -1742,11 +1848,11 @@ class TabDelegate(QStyledItemDelegate):
         sub_font = font_exact("regular", 11.5)
         p.setFont(name_font)
         p.setPen(QColor(C.TEXT))
-        name = QFontMetrics(name_font).elidedText(index.data(Qt.DisplayRole) or "", Qt.ElideRight, tw)
+        name = elided(QFontMetrics(name_font), index.data(Qt.DisplayRole) or "", tw)
         p.drawText(QRectF(tx, text_top, tw, self.NAME_H), Qt.AlignLeft | Qt.AlignVCenter, name)
         p.setFont(sub_font)
         p.setPen(QColor(index.data(ROLE_SUB_COLOR) or C.MUTED))
-        sub = QFontMetrics(sub_font).elidedText(index.data(ROLE_SUB) or "", Qt.ElideRight, tw)
+        sub = elided(QFontMetrics(sub_font), index.data(ROLE_SUB) or "", tw)
         p.drawText(QRectF(tx, text_top + self.NAME_H, tw, self.SUB_H), Qt.AlignLeft | Qt.AlignVCenter, sub)
         p.restore()
 
@@ -2367,7 +2473,7 @@ class _TitleLineEdit(QLineEdit):
         painter.setPen(self.palette().color(self.palette().Text))
         painter.setFont(self.font())
         painter.drawText(rect, Qt.AlignLeft | Qt.AlignVCenter,
-                         fm.elidedText(self.text(), Qt.ElideRight, rect.width()))
+                         elided(fm, self.text(), rect.width()))
 
 
 class TitleEdit(QWidget):

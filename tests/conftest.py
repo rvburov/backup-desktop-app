@@ -14,7 +14,14 @@ import pytest  # noqa: E402
 
 @pytest.fixture(scope="session")
 def qapp():
-    """QApplication для тестов интерфейса. Тесты бэкенда его не используют."""
+    """Один QApplication на весь прогон: и для интерфейса, и для тестов бэкенда, которым нужен Qt.
+
+    Свой временный QCoreApplication в тесте создавать нельзя. Его удаление вызывает в PyQt5
+    pyqt5_cleanup_qobjects(), а та навсегда выключает слежение за удалением объектов, созданных
+    самим Qt (полосы прокрутки, viewport и т. п.). Их обертки после этого не узнают об удалении
+    объекта, и обертка удаленной полосы прокрутки может достаться новому объекту по тому же адресу:
+    вызов через нее падает с ошибкой сегментации (редкий сбой всего прогона).
+    """
     from PyQt5.QtWidgets import QApplication
 
     from backup_app.backend import APP_NAME
@@ -22,7 +29,21 @@ def qapp():
     app = QApplication.instance() or QApplication([])
     app.setApplicationName(APP_NAME)
     app.setQuitOnLastWindowClosed(False)
+    if not cpp_children_deletion_tracked():
+        pytest.fail("PyQt5 не следит за удалением объектов Qt: какой-то тест создал и удалил свой "
+                    "QCoreApplication (нужно брать общий qapp)")
     return app
+
+
+def cpp_children_deletion_tracked() -> bool:
+    """Узнает ли обертка объекта, созданного самим Qt, что объект удален вместе с родителем."""
+    from PyQt5 import sip
+    from PyQt5.QtWidgets import QScrollArea
+
+    area = QScrollArea()
+    bar = area.verticalScrollBar()
+    sip.delete(area)
+    return sip.isdeleted(bar)
 
 
 @pytest.fixture

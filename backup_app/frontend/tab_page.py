@@ -189,7 +189,7 @@ class SourceDelegate(QStyledItemDelegate):
         name_font = font("medium", 13)
         p.setFont(name_font)
         p.setPen(QColor(C.DANGER if problem else C.TEXT))
-        name = QFontMetrics(name_font).elidedText(_base_name(path), Qt.ElideRight, tw)
+        name = W.elided(QFontMetrics(name_font), _base_name(path), tw)
         p.drawText(QRectF(tx, top, tw, 18.2), Qt.AlignLeft | Qt.AlignVCenter, name)
         if problem:
             sub_font, sub, color, height = font("regular", 11.5), problem_line(path, problem), C.DANGER, 16.1
@@ -198,7 +198,7 @@ class SourceDelegate(QStyledItemDelegate):
         p.setFont(sub_font)
         p.setPen(QColor(color))
         p.drawText(QRectF(tx, top + 18.2, tw, height), Qt.AlignLeft | Qt.AlignVCenter,
-                   QFontMetrics(sub_font).elidedText(sub, Qt.ElideRight, tw))
+                   W.elided(QFontMetrics(sub_font), sub, tw))
         if self.hover_button_row == index.row():
             p.setPen(Qt.NoPen)
             p.setBrush(QColor(C.GHOST_HOVER))
@@ -427,8 +427,7 @@ class TabPage(QWidget):
         lay.addWidget(self.source_list)
         empty_box = QWidget()
         empty_lay = _box(QVBoxLayout, (12, 0, 12, 12), parent=empty_box)
-        self.empty_label = W.WrapAnywhereLabel(EMPTY_SOURCES, "empty")
-        self.empty_label.set_alignment(Qt.AlignHCenter)
+        self.empty_label = W.EmptyNote(EMPTY_SOURCES)
         empty_lay.addWidget(self.empty_label)
         self.empty_box = empty_box
         lay.addWidget(empty_box)

@@ -1,4 +1,6 @@
 """Оформление и готовые элементы интерфейса: собираются без экрана и ведут себя как в макете."""
+import math
+
 import pytest
 from PyQt5.QtCore import QPoint, Qt, QTimer, qInstallMessageHandler
 from PyQt5.QtGui import QColor, QFont, QIcon
@@ -268,6 +270,78 @@ def test_segmented_elides_in_narrow_column(host):
     host.setFixedWidth(600)
     pump(host)
     assert not weekly.is_elided() and weekly.toolTip() == ""
+
+
+def _pixel(widget, x, y):
+    """Цвет точки (x, y) виджета (в px окна) на снимке grab() с учетом масштаба экрана."""
+    image = widget.grab().toImage()
+    ratio = image.devicePixelRatio()
+    return QColor(image.pixel(int((x + 0.5) * ratio), int((y + 0.5) * ratio)))
+
+
+def _near(color, hex_color, tol=3):
+    want = QColor(hex_color)
+    return all(abs(a - b) <= tol for a, b in ((color.red(), want.red()), (color.green(), want.green()),
+                                               (color.blue(), want.blue())))
+
+
+def test_segmented_ring_is_outside_the_selected_segment(host):
+    # макет: box-shadow 0 0 0 1px #D3DAE3 СНАРУЖИ сегмента 28px; сам сегмент белый до края
+    seg = show_in(host, W.Segmented([("daily", "Ежедневно"), ("weekly", "Еженедельно")], "daily"), width=400)
+    pump(host)
+    box = seg.button("daily").geometry()
+    mid = box.center().x()
+    assert box.height() == 28
+    assert _near(_pixel(seg, mid, box.top() - 1), C.RING)      # обводка — над сегментом
+    assert _near(_pixel(seg, mid, box.top()), C.CARD)          # верхний ряд сегмента — белый
+    assert _near(_pixel(seg, box.left() - 1, box.center().y()), C.RING, tol=8)   # слева (+ тень 0.04)
+    other = seg.button("weekly").geometry()
+    assert _near(_pixel(seg, other.center().x(), other.top()), C.DIVIDER)   # невыбранный — фон группы
+    seg.set_value("weekly")
+    pump(host)
+    assert _near(_pixel(seg, other.center().x(), other.top() - 1), C.RING)
+    assert _near(_pixel(seg, mid, box.top() - 1), C.DIVIDER)
+
+
+def test_elided_text_has_no_space_before_ellipsis(themed):
+    from PyQt5.QtGui import QFontMetrics
+    metrics = QFontMetrics(theme.font("semibold", 13))
+    text = "Очень длинное название вкладки для проверки обрезки текста в списке"
+    raw_space = False
+    for width in range(30, metrics.horizontalAdvance(text) + 10):
+        shown = W.elided(metrics, text, width)
+        raw_space = raw_space or metrics.elidedText(text, Qt.ElideRight, width).endswith(" …")
+        if shown == text:
+            continue
+        assert shown.endswith("…") and not shown[:-1].endswith(" ")
+        assert text.startswith(shown[:-1])
+    assert raw_space                                    # Qt оставляет пробел при какой-то ширине — его и убрали
+    assert W.elided(metrics, "Коротко ", 500) == "Коротко "   # непрерывный текст не меняется
+
+
+def test_half_leading_is_floored_like_chromium():
+    # LayoutNG: отступ текста от верха строки — половина разницы, округленная вниз до целых px
+    assert W.half_leading(12 * 1.4, 15) == 0          # 12px: 0.9 → 0
+    assert W.half_leading(12.5 * 1.4, 15) == 1        # 12.5px: 1.25 → 1
+    assert W.half_leading(13 * 1.4, 16) == 1          # 13px: 1.1 → 1
+    assert W.half_leading(11.5 * 1.4, 14) == 1        # 11.5px: 1.05 → 1
+    assert W.half_leading(10, 15) == 0
+
+
+def test_empty_note_dashed_border(host):
+    note = show_in(host, W.EmptyNote("Список пуст. Добавьте папки или файлы кнопками выше."), width=600)
+    pump(host)
+    # 1.5px макета округляются вниз до пикселей экрана: при 100 % — 1px
+    ratio = max(1.0, note.devicePixelRatioF())
+    assert note.border_width() * ratio == max(1, math.floor(1.5 * ratio + 1e-6))
+    # 1 + 18 + строка 17.5 (→ 18) + 17 + 1 = 55, как блок 55.5px макета в Chromium
+    assert note.heightForWidth(note.width()) == 55
+    dashes = W.EmptyNote._dashes(100.0, 3.0, 2.0)
+    assert dashes[0][0] == 0 and dashes[-1][0] + dashes[-1][1] == pytest.approx(100.0)
+    steps = {round(b[0] - a[0], 6) for a, b in zip(dashes, dashes[1:])}
+    assert len(steps) == 1 and 4.5 <= steps.pop() <= 5.5        # штрих 3, промежуток около 2
+    assert W.EmptyNote._dashes(2.0, 3.0, 2.0) == [(0.0, 2.0)]
+    note.grab()                                                    # рисуется без ошибок
 
 
 def test_day_chips(host):
@@ -725,16 +799,38 @@ def test_textless_checkboxes_leave_gap_to_layout(host):
     assert check.text_label.x() == check.checkbox.geometry().right() + 1 + 6
 
 
-def test_fractional_font_widths_follow_the_mockup(host):
+def mockup_text_width(f, text, px):
+    """Ширина текста в макете (браузер рисует дробный размер без округления до целых пикселей).
+
+    Меряем тем же шрифтом размером 200px и пересчитываем: при таком размере хинтинг и округление
+    ширин знаков (на каждой системе свои) дают ошибку меньше сотой пикселя на знак.
+    """
     from PyQt5.QtGui import QFontMetricsF
+    big = QFont(f)
+    big.setPointSizeF(theme.px_to_pt(200))
+    return QFontMetricsF(big).horizontalAdvance(text) * px / 200
+
+
+def test_fractional_font_widths_follow_the_mockup(host):
+    from PyQt5.QtGui import QFontMetrics, QFontMetricsF
+    from PyQt5.QtWidgets import QPushButton
     small = show_in(host, W.Button("Открыть подробный журнал", "ghost", small=True))
     heading = show_in(host, W.label("Настройки вкладки", "h2"))
     pump()
-    from PyQt5.QtWidgets import QPushButton
     assert theme.font_px(small.font()) == pytest.approx(12.5)
-    delta = W.exact_width_delta(small.font(), small.text())   # Qt5 рисовал бы 13px: текст на 4 % шире
-    assert delta >= 4
+    text = small.text()
+    # Qt5 рисует 12.5px целым 13px; насколько это шире, зависит от хинтинга системы (Linux — 7 px,
+    # Windows — 2 px), поэтому проверяем не число, а результат: место под текст — как в макете
+    rounded = QFontMetrics(small.font()).horizontalAdvance(text)
+    exact_w = QFontMetricsF(theme.exact(small.font())).horizontalAdvance(text)
+    delta = W.exact_width_delta(small.font(), text)
+    assert delta == max(0, rounded - math.ceil(exact_w))
     assert small.sizeHint().width() == QPushButton.sizeHint(small).width() - delta
+    room = rounded - delta                                   # ширина под текст в кнопке
+    mockup = mockup_text_width(small.font(), text, 12.5)
+    assert abs(room - mockup) <= abs(rounded - mockup)       # не дальше от макета, чем целый 13px
+    if rounded - mockup >= 2:                                # 13px заметно шире макета — кнопка уже
+        assert room < rounded
     text_w = QFontMetricsF(theme.exact(heading.font())).horizontalAdvance(heading.text())
     assert heading.sizeHint().width() <= text_w + 2
 

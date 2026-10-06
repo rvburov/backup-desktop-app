@@ -337,8 +337,10 @@ QLabel[kind="note"], QWidget[kind="note"] {{ {_fs(12.5)} color: {C.MUTED}; backg
     border-radius: 6px; padding: 10px 12px; }}
 QLabel[kind="note-sm"], QWidget[kind="note-sm"] {{ {_fs(12)} color: {C.MUTED}; background: {C.NOTE_BG};
     border-radius: 6px; padding: 9px 11px; }}
-QLabel[kind="empty"], QWidget[kind="empty"] {{ {_fs(12.5)} color: {C.MUTED}; border: 1px dashed {C.INPUT};
-    border-radius: 8px; padding: 18px 12px; }}
+/* пустой список: штриховую рамку рисует EmptyNote; здесь — ее место (1px, как 1.5px макета при 100 %) и поля.
+   Снизу 17px: строка 17.5px округляется до 18, а блок макета (55.5px) Chromium рисует высотой 55 */
+QLabel[kind="empty"], QWidget[kind="empty"] {{ {_fs(12.5)} color: {C.MUTED}; border: 1px solid transparent;
+    border-radius: 8px; padding: 18px 12px 17px; }}
 /* строка текста высотой line-height 1.4, как в макете (текст по центру строки) */
 {_line_boxes()}
 
@@ -436,8 +438,8 @@ QFrame[kind="segmented"] {{ background: {C.DIVIDER}; border: none; border-radius
 QPushButton[kind="seg"] {{ {med} {_fs(12.5)} background: transparent; border: 1px solid transparent;
     border-radius: 5px; padding: 0 10px; min-height: 26px; max-height: 26px; color: {C.TEXT2}; }}
 QPushButton[kind="seg"]:hover {{ background: {C.SEG_HOVER}; }}
-QPushButton[kind="seg"]:checked {{ background: {C.CARD}; color: {C.TEXT}; border-color: {C.RING};
-    border-bottom-color: #C5CDD8; }}
+/* выбранный: белую заливку, обводку 1px и тень снаружи сегмента рисует Segmented.paintEvent */
+QPushButton[kind="seg"]:checked {{ background: transparent; color: {C.TEXT}; }}
 QPushButton[kind="seg"][kbfocus="true"] {{ border-color: {C.ACCENT}; }}
 QPushButton[kind="chip"] {{ {med} {_fs(12)} background: {C.CARD}; border: 1px solid {C.INPUT}; border-radius: 5px;
     padding: 0; min-height: 26px; max-height: 26px; min-width: 32px; max-width: 32px; color: {C.TEXT2}; }}
