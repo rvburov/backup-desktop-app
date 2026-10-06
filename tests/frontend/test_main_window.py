@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timedelta
 
 import pytest
-from PyQt5.QtCore import QTime
+from PyQt5.QtCore import QCoreApplication, QEvent, QTime
 
 from backup_app.backend import (NO_DESTINATION, NO_SOURCES, NO_TABS_WITH_DATA, PERIOD_MONTHLY, PERIOD_WEEKLY,
                                 STATUS_OK, STATUS_PARTIAL, AppConfig, AppProblem, BackupFinished, BackupProgress,
@@ -111,6 +111,8 @@ def env(qapp, config_dir, monkeypatch):
             window.tray.hide()
         window.deleteLater()
     qapp.processEvents()
+    # окна удаляются сразу: иначе они копятся, и каждая смена стиля в следующих тестах их перерисовывает
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
 
 
 def fill_tab(window, folders=(), files=(), destination=""):
@@ -747,13 +749,14 @@ def test_tab_settings_are_saved_on_change(env):
     for _ in range(30):
         page.monthday.up_button.click()
     assert env.stored().tabs[0].monthday == 31
-    assert page.month_hint.isVisibleTo(page)
+    assert not page.month_hint.isHidden()
 
 
 def test_splitter_limits_and_reset(env):
-    window = env.window()
+    window = env.window(show=True)
     splitter = window.splitter
     window.resize(1180, 868)
+    env.app.processEvents()
     assert splitter.side_width() == 240
     assert splitter.set_side_width(100) == 180
     assert splitter.set_side_width(1000) == 440

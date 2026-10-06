@@ -226,7 +226,7 @@ class PageScroll(QScrollArea):
     def _sync_margin(self, *_args) -> None:
         layout = self.widget().layout()
         bar = self.verticalScrollBar()
-        right = 16 - bar.width() if bar.maximum() > 0 else 16
+        right = 16 - bar.sizeHint().width() if bar.maximum() > 0 else 16
         m = layout.contentsMargins()
         if m.right() != right:
             layout.setContentsMargins(m.left(), m.top(), max(0, right), m.bottom())
@@ -508,6 +508,7 @@ class MainWindow(QMainWindow):
         self._title_timer.stop()
         self._render_entry(self.current_tab())
         self._render_page()
+        self._render_status()  # ближайшее копирование учитывает только вкладки с данными
         self.save_settings()
 
     def _on_title_edited(self, name: str) -> None:
@@ -809,6 +810,7 @@ class MainWindow(QMainWindow):
     def hide_to_tray(self) -> None:
         if not self.tray_mode_enabled():
             return
+        self._flush_title()
         self.hide()
         if not self._tray_hint_shown:
             self._tray_hint_shown = True

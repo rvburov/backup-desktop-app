@@ -8,8 +8,6 @@ block_cipher = None
 
 datas = [
     ("icon.ico", "."),
-    ("icons/files_icon.png", "icons"),
-    ("icons/settings_icon.png", "icons"),
     # шрифты интерфейса (frontend/theme.py загружает их из папки fonts) и их лицензии SIL OFL 1.1
     ("fonts/GolosText-Regular.ttf", "fonts"),
     ("fonts/GolosText-Medium.ttf", "fonts"),

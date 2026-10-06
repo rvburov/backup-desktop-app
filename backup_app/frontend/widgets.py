@@ -414,9 +414,14 @@ class ElidedLabel(QLabel):
         return self._metrics().elidedText(self.text(), Qt.ElideRight, max(0, self.contentsRect().width()))
 
     def sizeHint(self):  # noqa: N802
+        # ширина — текст (как у дробного размера макета) плюс поля QSS, без запаса, который добавляет QLabel
+        self.ensurePolished()
         hint = super().sizeHint()
-        extra = self.fontMetrics().horizontalAdvance(self.text()) - self._metrics().horizontalAdvance(self.text())
-        return QSize(hint.width() - max(0, extra), hint.height())
+        if not self.text():
+            return hint
+        frame = self.width() - self.contentsRect().width()
+        return QSize(frame + math.ceil(QFontMetricsF(exact(self.font())).horizontalAdvance(self.text())) + 1,
+                     hint.height())
 
     def minimumSizeHint(self):  # noqa: N802
         hint = super().minimumSizeHint()
