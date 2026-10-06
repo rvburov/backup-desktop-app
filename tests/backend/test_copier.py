@@ -224,7 +224,13 @@ def test_safe_destination_path_falls_back_to_counter_on_same_second(tmp_path, mo
     assert safe_destination_path(str(original), keep_history=False).endswith("f_(1).txt")
 
 
-def test_folder_copy_name():
+@pytest.mark.skipif(os.name != "nt", reason="буквы дисков есть только в Windows")
+def test_folder_copy_name_for_windows_paths():
     assert folder_copy_name("C:" + chr(92)) == "Диск_C"
     assert folder_copy_name("C:" + chr(92) + "Users" + chr(92) + "x" + chr(92)) == "x"
+
+
+def test_folder_copy_name():
     assert folder_copy_name("/home/user/docs") == "docs"
+    assert folder_copy_name("/home/user/docs/") == "docs"
+    assert folder_copy_name("/") == "Диск_root"

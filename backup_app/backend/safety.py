@@ -75,6 +75,8 @@ def entry_is_link(entry: os.DirEntry, info: os.stat_result) -> bool:
             return checker()
         except OSError:
             return False
+    if os.name != "nt":
+        return False
     return getattr(info, "st_reparse_tag", 0) == stat.IO_REPARSE_TAG_MOUNT_POINT
 
 

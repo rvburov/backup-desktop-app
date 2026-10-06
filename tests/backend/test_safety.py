@@ -69,6 +69,28 @@ def test_symlinks_inside_folder_are_skipped(area):
     assert len(result.skipped) == 2
 
 
+class OldDirEntry:
+    """DirEntry из Python 3.11: метода is_junction у него ещё нет."""
+
+    def __init__(self, entry):
+        self._entry = entry
+
+    def is_symlink(self):
+        return self._entry.is_symlink()
+
+
+def test_link_check_works_without_dir_entry_is_junction(area):
+    src, outside, dst = area
+    expected = {"docs": False}
+    if os.name == "nt":
+        assert make_junction(src / "link", outside)
+        expected["link"] = True
+    with os.scandir(str(src)) as entries:
+        found = {entry.name: safety.entry_is_link(OldDirEntry(entry), entry.stat(follow_symlinks=False))
+                 for entry in entries}
+    assert found == expected
+
+
 @windows_only
 def test_explicitly_selected_junction_is_copied(area, log_records):
     src, outside, dst = area
