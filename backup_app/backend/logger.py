@@ -1,6 +1,7 @@
-"""Журнал приложения: файл с ротацией. Без Qt.
+"""Подробный журнал приложения: файл с ротацией. Без Qt.
 
-Интерфейс подключает к этому же логгеру свой обработчик, чтобы показывать записи в окне.
+В журнал пишется всё: копирование, служебные сообщения и технические подробности ошибок.
+Окно показывает не журнал, а короткую историю копирования (модуль history).
 """
 import logging
 import logging.handlers
@@ -9,7 +10,6 @@ import os
 from .constants import LOG_FILE_NAME, LOGGER_NAME
 
 FILE_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
-DISPLAY_FORMAT = "[%(asctime)s] %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 _FILE_HANDLER_MARK = "_backup_app_file_handler"
@@ -23,15 +23,10 @@ def get_logger() -> logging.Logger:
     return logger
 
 
-def display_formatter() -> logging.Formatter:
-    """Формат записей для показа в окне приложения."""
-    return logging.Formatter(DISPLAY_FORMAT, DATE_FORMAT)
-
-
 def setup_file_logging(log_directory: str, level: int = logging.INFO) -> str:
     """Подключает файл журнала с ротацией и возвращает путь к нему.
 
-    Повторный вызов заменяет только файловый обработчик, обработчики интерфейса остаются.
+    Повторный вызов заменяет только файловый обработчик, остальные обработчики остаются.
     """
     logger = get_logger()
     logger.setLevel(level)

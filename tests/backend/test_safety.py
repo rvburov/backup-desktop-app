@@ -56,6 +56,7 @@ def test_junction_inside_folder_is_skipped_and_logged(area, log_records):
     result = run([BackupJob("x", [str(src / "docs")], [], str(dst))])
     assert list_rel(dst) == ["docs/normal.txt"]
     assert result.status == STATUS_OK and len(result.skipped) == 2
+    assert result.over_limit == []
     assert "пропущено по правилам безопасности: 2" in result.message
     assert sum("Пропущена ссылка" in line for line in security_lines(log_records)) == 2
 
@@ -66,7 +67,7 @@ def test_symlinks_inside_folder_are_skipped(area):
     make_symlink(src / "docs" / "dir_link", outside, directory=True)
     result = run([BackupJob("x", [str(src / "docs")], [], str(dst))])
     assert list_rel(dst) == ["docs/normal.txt"]
-    assert len(result.skipped) == 2
+    assert len(result.skipped) == 2 and result.over_limit == []
 
 
 class OldDirEntry:
@@ -187,6 +188,7 @@ def test_files_over_size_limit_are_skipped(area):
     result = run([BackupJob("x", [str(src / "docs")], [str(src / "big_single.bin")], str(dst))], policy)
     assert list_rel(dst) == ["docs/normal.txt"]
     assert len(result.skipped) == 2 and all("больше" in text for text in result.skipped)
+    assert result.over_limit == result.skipped
 
 
 def test_zero_size_limit_means_unlimited(area):
@@ -227,7 +229,7 @@ def test_too_deep_folder_is_skipped(tmp_path):
     result = run([BackupJob("x", [str(src)], [], str(dst))], SafetyPolicy(max_path_length=limit))
     copied = list_rel(dst)
     assert "s/a.txt" in copied and not any("deep.txt" in path for path in copied)
-    assert any("длиннее" in text for text in result.skipped)
+    assert any("длиннее" in text for text in result.over_limit)
 
 
 def test_shorten_name():

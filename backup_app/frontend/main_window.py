@@ -7,25 +7,28 @@
 - закрытие и сворачивание окна прячут приложение в трей, если трей доступен;
 - плановые запуски не открывают диалогов, о проблемах сообщают уведомления;
 - о результате каждого копирования сообщает уведомление.
+
+Внизу окна показывается история копирования из бэкенда. Служебные сообщения в окно
+не попадают: они есть только в подробном журнале, который открывается кнопкой.
 """
 import os
 import platform
 from datetime import datetime
 from typing import List, Optional
 
-from PyQt5.QtCore import QEvent, QSize, Qt, QTime, QTimer
-from PyQt5.QtGui import QIcon
+from PyQt5.QtCore import QEvent, QSize, Qt, QTime, QTimer, QUrl
+from PyQt5.QtGui import QDesktopServices, QIcon, QTextCursor
 from PyQt5.QtWidgets import (QAction, QApplication, QCheckBox, QComboBox, QFrame, QGridLayout,
                              QGroupBox, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
-                             QProgressBar, QPushButton, QSizePolicy, QSpinBox,
-                             QStackedWidget, QTabWidget, QTextEdit, QTimeEdit, QToolBar,
+                             QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy, QSpinBox,
+                             QStackedWidget, QTabWidget, QTimeEdit, QToolBar,
                              QVBoxLayout, QWidget)
 
 from ..backend import (ALREADY_RUNNING, MAX_PATH_LENGTH, PERIOD_MONTHLY, PERIOD_WEEKLY, PERIODS,
                        SECURITY_TAG, STATUS_CANCELLED, STATUS_OK, STATUS_PARTIAL, WEEKDAYS,
-                       AppConfig, BackupFinished, BackupProgress, BackupResult, BackupService,
-                       BackupStarted, ConfigChanged, RunSkipped, ScheduleChanged, TabConfig,
-                       format_run_time, get_logger)
+                       AppConfig, AppProblem, BackupFinished, BackupProgress, BackupResult, BackupService,
+                       BackupStarted, ConfigChanged, HistoryAdded, HistoryEntry, RunSkipped, ScheduleChanged,
+                       TabConfig, format_run_time, get_logger)
 from .bridge import ServiceBridge
 from .constants import APP_TITLE, SECURITY_HINT, TAB_TITLE_LIMIT
 from .resources import resource_path
@@ -40,6 +43,9 @@ RESULT_VIEW = {
 }
 FAILED_VIEW = ("Ошибка копирования", "error", "Ошибка копирования")
 NO_DATA_TEXT = "Выберите исходные файлы/папки и папку назначения!"
+HISTORY_TITLE = "История копирования"
+HISTORY_EMPTY_TEXT = "Копирований пока не было"
+HISTORY_VIEW_LIMIT = 10000  # строк истории в окне; файл истории хранит записи за год
 
 
 def truncate_tab_title(title: str) -> str:
@@ -67,12 +73,12 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(self.style().standardIcon(self.style().SP_ComputerIcon))
 
         self.init_ui()
-        bridge.log_message.connect(self.log_text.append)
         bridge.event_received.connect(self.on_backend_event)
         self.setup_tray()
         self.apply_config(service.config)
         self.render_schedule(service.schedule_active, service.next_run)
         self.render_running(service.is_running)
+        self.render_history(service.history())
 
     # ================================================================ UI
     def init_ui(self) -> None:
@@ -129,12 +135,21 @@ class MainWindow(QMainWindow):
             "background-color: #e3f2fd; padding: 5px; border: 1px solid #bbdefb;")
         layout.addWidget(self.next_backup_label)
 
-        log_group = QGroupBox()
-        self.log_text = QTextEdit("История операций:")
-        self.log_text.setReadOnly(True)
-        log_group.setLayout(QVBoxLayout())
-        log_group.layout().addWidget(self.log_text)
-        layout.addWidget(log_group)
+        history_group = QGroupBox()
+        history_layout = QVBoxLayout(history_group)
+        header = QHBoxLayout()
+        header.addWidget(QLabel(HISTORY_TITLE))
+        header.addStretch()
+        self.journal_btn = QPushButton("Открыть подробный журнал")
+        self.journal_btn.clicked.connect(self.open_journal)
+        header.addWidget(self.journal_btn)
+        history_layout.addLayout(header)
+        self.history_text = QPlainTextEdit()
+        self.history_text.setReadOnly(True)
+        self.history_text.setMaximumBlockCount(HISTORY_VIEW_LIMIT)
+        self.history_text.setPlaceholderText(HISTORY_EMPTY_TEXT)
+        history_layout.addWidget(self.history_text)
+        layout.addWidget(history_group)
 
         self.hide_period_widgets()
         self.setup_statusbar(layout)
@@ -323,6 +338,16 @@ class MainWindow(QMainWindow):
     def show_problem(self, title: str, text: str) -> None:
         QMessageBox.warning(self, title, text)
 
+    def show_app_problem(self, title: str, text: str) -> None:
+        """Сбой приложения: на открытом окне диалог, при работе в трее уведомление.
+
+        Уведомление показывается, даже если уведомления о копировании выключены.
+        """
+        if self.isVisible() or self.tray is None:
+            QMessageBox.warning(self, title, text)
+        else:
+            self.tray.notify(title, text, "warning")
+
     # ============================================================== вкладки
     def add_tab(self, config: Optional[TabConfig] = None, make_current: bool = True) -> TabPage:
         page = TabPage(config or TabConfig(), self.service, self.tabs_widget)
@@ -490,6 +515,10 @@ class MainWindow(QMainWindow):
                 self.notify("Копирование не выполнено", event.reason, "warning")
         elif isinstance(event, ConfigChanged):
             self.apply_config(event.config)
+        elif isinstance(event, HistoryAdded):
+            self.add_history_entry(event.entry)
+        elif isinstance(event, AppProblem):
+            self.show_app_problem(event.title, event.text)
 
     def show_result(self, result: BackupResult) -> None:
         title, kind, status = RESULT_VIEW.get(result.status, FAILED_VIEW)
@@ -527,6 +556,23 @@ class MainWindow(QMainWindow):
         self.cancel_btn.setVisible(running)
         if self.tray is not None:
             self.tray.set_backup_enabled(not running)
+
+    # ============================================================= история
+    def render_history(self, entries: List[HistoryEntry]) -> None:
+        self.history_text.setPlainText("\n".join(line for entry in entries for line in entry.lines()))
+        self.history_text.moveCursor(QTextCursor.End)
+
+    def add_history_entry(self, entry: HistoryEntry) -> None:
+        for line in entry.lines():
+            self.history_text.appendPlainText(line)
+
+    def open_journal(self) -> None:
+        path = self.service.log_path
+        if not path or not os.path.exists(path):
+            QMessageBox.information(self, "Подробный журнал", "Журнал пока пуст.")
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
+            self.show_problem("Не удалось открыть журнал", f"Откройте файл вручную:\n{path}")
 
     # ============================================================ прогресс
     def show_progress_bar(self) -> None:

@@ -16,4 +16,5 @@ MINIMIZED_FLAG = "--minimized"
 
 SETTINGS_FILE_NAME = "settings.ini"
 LOG_FILE_NAME = "backup-app.log"
+HISTORY_FILE_NAME = "history.txt"
 LOGGER_NAME = "backup_app"

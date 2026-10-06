@@ -4,24 +4,30 @@
 и копирование работают в фоновых потоках. О происходящем сервис сообщает событиями
 (модуль events), на которые подписывается интерфейс. Об интерфейсе сервис ничего не знает
 и работает без Qt, поэтому его можно запускать и тестировать без окна.
+
+Для пользователя сервис ведёт историю копирования (модуль history): начало и итог каждого
+копирования, ошибки по файлам, пропуски по расписанию, запуск и остановку расписания.
+Всё остальное пишется только в подробный журнал.
 """
 import copy
 import logging
 import os
 import threading
 from datetime import datetime, timedelta
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 
 from . import autostart as autostart_module
 from . import safety
-from .constants import CHECK_INTERVAL_SECONDS, MISSED_RUN_DELAY_SECONDS
+from .constants import CHECK_INTERVAL_SECONDS, HISTORY_FILE_NAME, MISSED_RUN_DELAY_SECONDS
 from .copier import (STATUS_CANCELLED, STATUS_FAILED, STATUS_OK, STATUS_PARTIAL, BackupJob,
                      BackupOptions, BackupResult, BackupRunner)
-from .events import (BackupFinished, BackupProgress, BackupStarted, ConfigChanged, RunSkipped,
-                     ScheduleChanged)
+from .events import (AppProblem, BackupFinished, BackupProgress, BackupStarted, ConfigChanged, HistoryAdded,
+                     RunSkipped, ScheduleChanged)
+from .history import ICON_ERROR, ICON_OK, ICON_WARNING, TIME_FORMAT, HistoryEntry, HistoryStore, limit_details
 from .logger import get_logger
 from .scheduler import format_run_time, next_run, previous_run
 from .settings_store import EDITABLE_FIELDS, AppConfig, SettingsStore, TabConfig
+from .wording import count_files
 
 Listener = Callable[[object], None]
 
@@ -29,19 +35,25 @@ ALREADY_RUNNING = "Копирование уже выполняется, нов�
 NO_TABS_WITH_DATA = "Нет вкладок с данными для копирования"
 NO_SOURCES = "Не выбраны исходные файлы и папки"
 NO_DESTINATION = "Не выбрана папка назначения"
+SCHEDULED_WHILE_RUNNING = "в это время шло другое копирование"
+RESULT_ICONS = {STATUS_OK: ICON_OK, STATUS_PARTIAL: ICON_WARNING}
 
 
 class BackupService:
     def __init__(self, store: SettingsStore, *, now: Optional[Callable[[], datetime]] = None,
                  check_interval: float = CHECK_INTERVAL_SECONDS,
                  missed_run_delay: float = MISSED_RUN_DELAY_SECONDS,
-                 autostart=autostart_module, log_path: Optional[str] = None):
+                 autostart=autostart_module, log_path: Optional[str] = None,
+                 history: Optional[HistoryStore] = None):
         self._store = store
         self._now = now or datetime.now
         self._check_interval = check_interval
         self._missed_run_delay = missed_run_delay
         self._autostart = autostart
         self._log_path = log_path
+        self._history = history or HistoryStore(
+            os.path.join(os.path.dirname(os.path.abspath(store.path)), HISTORY_FILE_NAME), now=self._now)
+        self._settings_write_failed = False
         self._protected = safety.ProtectedPaths(safety.system_paths())
         self.log = get_logger()
 
@@ -84,6 +96,19 @@ class BackupService:
     @property
     def settings_path(self) -> str:
         return self._store.path
+
+    @property
+    def log_path(self) -> Optional[str]:
+        """Файл подробного журнала или None, если журнал не ведётся."""
+        return self._log_path
+
+    @property
+    def history_path(self) -> str:
+        return self._history.path
+
+    def history(self) -> List[HistoryEntry]:
+        """История копирования за срок хранения, от старых записей к новым."""
+        return self._history.entries()
 
     @property
     def config(self) -> AppConfig:
@@ -141,6 +166,9 @@ class BackupService:
             runner.cancel()
             if run_thread is not None and run_thread is not threading.current_thread():
                 run_thread.join(timeout)
+            if runner.result.status == STATUS_CANCELLED or (run_thread is not None and run_thread.is_alive()):
+                self._record(f"{ICON_ERROR} Копирование прервано при выходе из приложения, "
+                             f"скопировано {count_files(runner.result.copied_count)}")
         with self._lock:
             self._save()
         self.log.info("Приложение завершает работу")
@@ -187,22 +215,27 @@ class BackupService:
 
     def reset(self) -> AppConfig:
         """Останавливает расписание, отключает автозапуск и записывает настройки по умолчанию."""
+        events: list = []
         try:
             self._autostart.disable()
         except Exception as error:
             self.log.error(f"Не удалось отключить автозапуск: {error}")
+            events.append(AppProblem("Не удалось отключить автозапуск", str(error)))
         with self._lock:
+            was_active = self._schedule_active
             self._schedule_active = False
             self._next_run = None
             self._missed_run_due = None
             try:
                 self._config = self._store.reset()
             except OSError as error:
-                self.log.error(f"Не удалось сохранить настройки: {error}")
                 self._config = AppConfig()
+                self._settings_not_saved(error)
             config = copy.deepcopy(self._config)
         self.log.info("Все настройки сброшены к значениям по умолчанию")
-        self._emit(ConfigChanged(config), ScheduleChanged(False, None))
+        if was_active:
+            self._record("Расписание остановлено: настройки сброшены")
+        self._emit(*events, ConfigChanged(config), ScheduleChanged(False, None))
         return config
 
     # ------------------------------------------------------------- проверки
@@ -234,18 +267,22 @@ class BackupService:
             upcoming, period = self._next_run, self._config.period_type
         self.log.info(f"Автоматическое копирование запущено. Период: {period}, "
                       f"следующее: {format_run_time(upcoming)}")
+        self._record(f"Расписание запущено, следующее копирование: {upcoming.strftime(TIME_FORMAT)}")
         self._wake.set()
         self._emit(ScheduleChanged(True, upcoming))
         return []
 
     def stop_schedule(self) -> None:
         with self._lock:
+            was_active = self._schedule_active
             self._schedule_active = False
             self._next_run = None
             self._missed_run_due = None
             self._config.timer_active = False
             self._save()
         self.log.info("Автоматическое копирование остановлено")
+        if was_active:
+            self._record("Расписание остановлено")
         self._emit(ScheduleChanged(False, None))
 
     def tick(self, now: Optional[datetime] = None) -> bool:
@@ -271,18 +308,22 @@ class BackupService:
     def run_now(self, scheduled: bool = False) -> List[str]:
         """Запускает копирование в фоне. Возвращает список проблем, если запуск невозможен."""
         thread = None
+        record: Optional[str] = None
         messages: List[Tuple[int, str]] = []
         with self._lock:
             if self._runner is not None:
                 problems = [ALREADY_RUNNING]
                 event = RunSkipped(scheduled, ALREADY_RUNNING)
                 messages.append((logging.WARNING, ALREADY_RUNNING))
+                if scheduled:
+                    record = f"{ICON_WARNING} Плановое копирование не запущено: {SCHEDULED_WHILE_RUNNING}"
             else:
                 jobs, problems = self._build_jobs(self._config)
                 if problems:
                     event = RunSkipped(scheduled, "; ".join(problems))
                     if scheduled:
                         messages.append((logging.WARNING, f"Плановое копирование не запущено: {event.reason}"))
+                        record = f"{ICON_ERROR} Плановое копирование не запущено: {event.reason}"
                 else:
                     runner = BackupRunner(jobs, self._options(), self._policy(), on_progress=self._on_progress)
                     thread = threading.Thread(target=self._run_backup, args=(runner, scheduled),
@@ -293,9 +334,12 @@ class BackupService:
                     event = BackupStarted(scheduled, names)
                     kind = "плановое" if scheduled else "ручное"
                     messages.append((logging.INFO, f"Начато {kind} копирование: {', '.join(names)}"))
+                    record = f"{'Плановое' if scheduled else 'Ручное'} копирование: {', '.join(names)}"
         for level, text in messages:
             self.log.log(level, text)
         self._emit(event)
+        if record is not None:
+            self._record(record)
         if thread is not None:
             thread.start()
         return problems
@@ -321,6 +365,9 @@ class BackupService:
                 self._config.last_backup_time = self._now().replace(microsecond=0)
             self._save()
         self._log_result(result)
+        if not (self._stop.is_set() and result.status == STATUS_CANCELLED):  # иначе запись сделает shutdown
+            self._record(f"{RESULT_ICONS.get(result.status, ICON_ERROR)} {result.message}",
+                         result.errors + result.over_limit)
         self._emit(BackupFinished(result, scheduled))
         self._idle.set()
 
@@ -333,6 +380,15 @@ class BackupService:
             self.log.warning(f"✗ {result.message}")
         else:
             self.log.error(f"✗ {result.message}")
+
+    def _record(self, text: str, details: Sequence[str] = ()) -> None:
+        """Запись в историю копирования. Окно получает её событием HistoryAdded."""
+        entry = HistoryEntry(self._now().replace(second=0, microsecond=0), text, limit_details(details))
+        try:
+            self._history.add(entry)
+        except OSError as error:
+            self.log.error(f"Не удалось записать историю копирования: {error}")
+        self._emit(HistoryAdded(entry))
 
     def _on_progress(self, percent: int, text: str) -> None:
         self._emit(BackupProgress(percent, text))
@@ -361,7 +417,7 @@ class BackupService:
             actual = bool(self._autostart.is_enabled())
         except Exception as error:
             self.log.warning(f"Не удалось проверить автозапуск: {error}")
-            return []
+            return [AppProblem("Не удалось проверить автозапуск", str(error))]
         with self._lock:
             if actual == self._config.auto_start:
                 return []
@@ -373,7 +429,7 @@ class BackupService:
 
     def _resume_schedule(self) -> list:
         """Возобновляет расписание после запуска и планирует пропущенное копирование."""
-        missed = False
+        missed_at: Optional[datetime] = None
         with self._lock:
             if not self._config.timer_active:
                 return []
@@ -385,23 +441,29 @@ class BackupService:
             else:
                 now = self._now()
                 self._activate(now)
-                missed = self._config.run_missed and self._missed_run_pending(now)
-                if missed:
+                if self._config.run_missed:
+                    missed_at = self._missed_run_time(now)
+                if missed_at is not None:
                     self._missed_run_due = now + timedelta(seconds=self._missed_run_delay)
                 self._save()
                 event = ScheduleChanged(True, self._next_run)
         if problems:
-            self.log.warning("Расписание не возобновлено: " + "; ".join(problems))
+            reason = "; ".join(problems)
+            self.log.warning("Расписание не возобновлено: " + reason)
+            self._record(f"{ICON_ERROR} Расписание не возобновлено: {reason}")
         else:
             self.log.info(f"Расписание возобновлено, следующее копирование: {format_run_time(event.next_run)}")
-            if missed:
+            if missed_at is not None:
                 self.log.info("Назначенное время было пропущено, копирование будет выполнено сейчас")
+                self._record(f"{ICON_WARNING} Пропущено плановое копирование {missed_at.strftime(TIME_FORMAT)}, "
+                             "выполняется сейчас")
         return [event]
 
-    def _missed_run_pending(self, now: datetime) -> bool:
+    def _missed_run_time(self, now: datetime) -> Optional[datetime]:
+        """Время пропущенного планового копирования или None, если пропуска не было."""
         previous = previous_run(self._config.schedule(), now)
         marks = [mark for mark in (self._config.last_backup_time, self._config.timer_started_at) if mark]
-        return bool(marks) and max(marks) < previous
+        return previous if marks and max(marks) < previous else None
 
     def _activate(self, now: datetime) -> None:
         self._schedule_active = True
@@ -420,7 +482,17 @@ class BackupService:
         try:
             self._store.save(self._config)
         except OSError as error:
-            self.log.error(f"Не удалось сохранить настройки: {error}")
+            self._settings_not_saved(error)
+            return
+        self._settings_write_failed = False
+
+    def _settings_not_saved(self, error: OSError) -> None:
+        """Сбой записи настроек: в журнал каждый раз, на экран один раз до следующей удачной записи."""
+        self.log.error(f"Не удалось сохранить настройки: {error}")
+        if not self._settings_write_failed:
+            self._settings_write_failed = True
+            self._emit(AppProblem("Не удалось сохранить настройки",
+                                  f"Файл {self._store.path} недоступен для записи: {error}"))
 
     def _options(self) -> BackupOptions:
         config = self._config

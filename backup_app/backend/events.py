@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Optional, Tuple
 
 from .copier import BackupResult
+from .history import HistoryEntry
 from .settings_store import AppConfig
 
 
@@ -47,3 +48,18 @@ class ConfigChanged:
     """Настройки изменились не по команде окна: сброс или синхронизация автозапуска."""
 
     config: AppConfig
+
+
+@dataclass(frozen=True)
+class HistoryAdded:
+    """Новая запись истории копирования."""
+
+    entry: HistoryEntry
+
+
+@dataclass(frozen=True)
+class AppProblem:
+    """Сбой самого приложения, не связанный с копированием: например, не сохранились настройки."""
+
+    title: str
+    text: str

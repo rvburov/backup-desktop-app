@@ -7,8 +7,9 @@ import pytest
 
 from backup_app.backend import autostart
 from backup_app.backend import copier as copier_module
-from backup_app.backend.events import (BackupFinished, BackupProgress, BackupStarted, ConfigChanged,
-                                       RunSkipped, ScheduleChanged)
+from backup_app.backend import safety as safety_module
+from backup_app.backend.events import (AppProblem, BackupFinished, BackupProgress, BackupStarted, ConfigChanged,
+                                       HistoryAdded, RunSkipped, ScheduleChanged)
 from backup_app.backend.safety import system_paths
 from backup_app.backend.service import (ALREADY_RUNNING, NO_DESTINATION, NO_SOURCES, NO_TABS_WITH_DATA,
                                         BackupService)
@@ -266,6 +267,7 @@ def test_resume_impossible_without_sources(make_service, log_records):
     assert stored(service).timer_active is False
     assert any("Расписание не возобновлено" in line for line in log_records)
     assert ScheduleChanged(False, None) in events
+    assert [text[:30] for text in history_texts(service)] == ["✗ Расписание не возобновлено: "]
 
 
 def test_missed_run_executes_after_start(make_service, paths):
@@ -335,3 +337,130 @@ def test_path_checks_for_the_interface(make_service, tmp_path):
     assert service.destination_problem(str(tmp_path)) is None
     assert "недоступен" in service.path_problem(str(tmp_path / "нет"))
     assert service.path_problem(str(tmp_path)) is None
+
+
+# --------------------------------------------------------- история копирования
+def history_texts(service):
+    return [entry.text for entry in service.history()]
+
+
+def test_history_records_manual_backup_and_result(make_service, paths):
+    service, events, _clock = make_service(ready_config(paths))
+    assert service.run_now() == []
+    assert service.wait_idle(10)
+    assert history_texts(service) == ["Ручное копирование: Данные", "✓ Успешно скопировано 2 файла"]
+    assert [event.entry for event in of_type(events, HistoryAdded)] == service.history()
+    assert all(entry.time == NOW for entry in service.history())
+
+
+def test_history_survives_restart(make_service, paths):
+    service, _events, _clock = make_service(ready_config(paths))
+    service.run_now()
+    assert service.wait_idle(10)
+    service.shutdown()
+    again, _events, _clock = make_service()
+    assert history_texts(again) == ["Ручное копирование: Данные", "✓ Успешно скопировано 2 файла"]
+    assert os.path.dirname(again.history_path) == os.path.dirname(again.settings_path)
+
+
+def test_history_lists_errors_and_files_over_the_limit(make_service, paths, monkeypatch):
+    src, _dst = paths
+    (src / "docs" / "big.bin").write_bytes(b"x" * 4096)
+    monkeypatch.setattr(safety_module, "GB", 1024)  # лимит 2 ГБ превращается в 2 КБ
+    real = copier_module.shutil.copy2
+
+    def failing(source, target):
+        if source.endswith("a.txt"):
+            raise PermissionError(13, "Отказано в доступе")
+        return real(source, target)
+
+    monkeypatch.setattr(copier_module.shutil, "copy2", failing)
+    service, _events, _clock = make_service(ready_config(paths))
+    service.run_now()
+    assert service.wait_idle(10)
+    result = service.history()[-1]
+    assert result.text == "⚠ Скопировано 1 файл, ошибок: 1; пропущено по правилам безопасности: 1"
+    assert len(result.details) == 2
+    assert result.details[0].startswith("Не скопирован ") and result.details[0].endswith("a.txt: нет доступа")
+    assert "больше" in result.details[1] and result.details[1].endswith("big.bin")
+
+
+def test_history_records_schedule_and_skipped_runs(make_service, paths):
+    service, _events, _clock = make_service(ready_config(paths))
+    assert service.start_schedule() == []
+    empty = service.config
+    empty.tabs = [TabConfig("Пустая")]
+    service.update_config(empty)
+    service.tick(service.next_run + timedelta(seconds=1))
+    service.stop_schedule()
+    service.stop_schedule()
+    assert history_texts(service) == [
+        "Расписание запущено, следующее копирование: 07.10.2026 10:00",
+        f"✗ Плановое копирование не запущено: {NO_SOURCES}; {NO_DESTINATION}",
+        "Расписание остановлено",
+    ]
+
+
+def test_history_records_scheduled_run_while_copying(make_service, paths, monkeypatch):
+    src, _dst = paths
+    make_tree(src / "docs", {f"f{number:02d}.txt": "x" for number in range(10)})
+    slow_copy(monkeypatch)
+    service, _events, _clock = make_service(ready_config(paths))
+    service.run_now()
+    service.run_now(scheduled=True)
+    assert service.wait_idle(10)
+    assert history_texts(service)[1] == "⚠ Плановое копирование не запущено: в это время шло другое копирование"
+
+
+def test_history_records_missed_run(make_service, paths):
+    config = ready_config(paths, timer_active=True, timer_started_at=NOW - timedelta(days=1))
+    service, _events, _clock = make_service(config)
+    service.start(run_scheduler=False)
+    assert history_texts(service) == ["⚠ Пропущено плановое копирование 06.10.2026 10:00, выполняется сейчас"]
+    assert service.tick() is True
+    assert service.wait_idle(10)
+    assert history_texts(service)[1:] == ["Плановое копирование: Данные", "✓ Успешно скопировано 2 файла"]
+
+
+def test_history_records_backup_interrupted_by_exit(make_service, paths, monkeypatch):
+    src, dst = paths
+    make_tree(src / "docs", {f"f{number:02d}.txt": "x" for number in range(30)})
+    slow_copy(monkeypatch)
+    service, _events, _clock = make_service(ready_config(paths))
+    service.run_now()
+    deadline = time.monotonic() + 5
+    while not list_rel(dst) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    service.shutdown(timeout=5)
+    texts = history_texts(service)
+    assert texts[0] == "Ручное копирование: Данные" and len(texts) == 2
+    assert texts[1].startswith("✗ Копирование прервано при выходе из приложения, скопировано ")
+
+
+def test_reset_records_stopped_schedule(make_service, paths):
+    service, _events, _clock = make_service(ready_config(paths))
+    service.start_schedule()
+    service.reset()
+    assert history_texts(service)[-1] == "Расписание остановлено: настройки сброшены"
+
+
+def test_settings_write_failure_is_shown_once(make_service, paths, monkeypatch):
+    service, events, _clock = make_service(ready_config(paths))
+    failing = [True]
+    real_save = service._store.save
+
+    def save(config):
+        if failing[0]:
+            raise PermissionError(13, "Отказано в доступе")
+        real_save(config)
+
+    monkeypatch.setattr(service._store, "save", save)
+    for _ in range(3):
+        service.update_config(service.config)
+    problems = of_type(events, AppProblem)
+    assert len(problems) == 1 and problems[0].title == "Не удалось сохранить настройки"
+    failing[0] = False
+    service.update_config(service.config)
+    failing[0] = True
+    service.update_config(service.config)
+    assert len(of_type(events, AppProblem)) == 2

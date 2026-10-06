@@ -1,14 +1,16 @@
+import errno
 import os
 import time
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 
 from backup_app.backend import copier as copier_module
 from backup_app.backend.constants import BACKUP_FOLDER_PREFIX
 from backup_app.backend.copier import (STATUS_CANCELLED, STATUS_FAILED, STATUS_OK, STATUS_PARTIAL,
-                                       BackupJob, BackupOptions, BackupRunner, folder_copy_name,
-                                       safe_destination_path)
+                                       BackupJob, BackupOptions, BackupRunner, describe_error,
+                                       folder_copy_name, safe_destination_path)
 from backup_app.backend.safety import SafetyPolicy
 from helpers import list_rel, make_tree
 
@@ -54,7 +56,7 @@ def test_whole_folder_copy_into_daily_folder(tree):
     assert list_rel(dst) == sorted([f"{day}/docs/a.txt", f"{day}/docs/sub/b.txt", f"{day}/single.txt"])
     assert result.status == STATUS_OK
     assert result.copied_count == 3
-    assert result.message == "Успешно скопировано 3 файлов"
+    assert result.message == "Успешно скопировано 3 файла"
     assert result.total_bytes == 4 and result.copied_bytes == 4
     assert result.errors == [] and result.skipped == []
 
@@ -121,7 +123,7 @@ def test_locked_file_does_not_abort_the_folder(tree, monkeypatch):
     assert "docs/z_last.txt" in files and "docs/0_first.txt" in files and "single.txt" in files
     assert "docs/locked.txt" not in files
     assert result.status == STATUS_PARTIAL
-    assert len(result.errors) == 1 and "locked.txt" in result.errors[0]
+    assert len(result.errors) == 1 and result.errors[0].endswith("locked.txt: нет доступа")
     assert result.message == "Скопировано 5 файлов, ошибок: 1"
 
 
@@ -168,7 +170,7 @@ def test_multiple_jobs_use_their_own_destinations(tmp_path):
     jobs = [BackupJob("T1", [], [str(s1 / "x.txt")], str(d1)), BackupJob("T2", [str(s2)], [], str(d2))]
     lines, result = run(jobs, BackupOptions(False, True, False))
     assert list_rel(d1) == ["x.txt"] and list_rel(d2) == ["s2/y.txt"]
-    assert result.message == "Успешно скопировано 2 файлов из 2 вкладок"
+    assert result.message == "Успешно скопировано 2 файла из 2 вкладок"
     assert any("Копирование вкладки 'T2'" in line for line in lines)
 
 
@@ -234,3 +236,12 @@ def test_folder_copy_name():
     assert folder_copy_name("/home/user/docs") == "docs"
     assert folder_copy_name("/home/user/docs/") == "docs"
     assert folder_copy_name("/") == "Диск_root"
+
+
+def test_describe_error_gives_short_reasons():
+    busy = SimpleNamespace(winerror=32, errno=errno.EACCES, strerror="технический текст")
+    assert describe_error(busy) == "файл занят другой программой"
+    assert describe_error(PermissionError(errno.EACCES, "Permission denied")) == "нет доступа"
+    assert describe_error(OSError(errno.ENOSPC, "No space left on device")) == "на диске недостаточно места"
+    assert describe_error(OSError(99999, "редкая ошибка")) == "редкая ошибка"
+    assert describe_error(ValueError("сбой")) == "сбой"

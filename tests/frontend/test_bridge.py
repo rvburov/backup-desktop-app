@@ -1,7 +1,7 @@
-"""События и журнал из фоновых потоков бэкенда приходят в поток интерфейса."""
+"""События из фоновых потоков бэкенда приходят в поток интерфейса."""
 import threading
 
-from backup_app.backend import BackupService, ScheduleChanged, SettingsStore, get_logger
+from backup_app.backend import BackupService, ScheduleChanged, SettingsStore
 from backup_app.frontend.bridge import ServiceBridge
 from helpers import wait_for
 
@@ -22,17 +22,12 @@ def test_events_from_background_thread_arrive_in_gui_thread(qapp, tmp_path):
         bridge.close()
 
 
-def test_log_records_reach_the_window_and_stop_after_close(qapp, tmp_path):
+def test_events_stop_after_close(qapp, tmp_path):
     service = BackupService(SettingsStore(str(tmp_path / "settings.ini")))
     bridge = ServiceBridge(service)
-    lines = []
-    bridge.log_message.connect(lines.append)
-    worker = threading.Thread(target=lambda: get_logger().info("запись из фонового потока"))
-    worker.start()
-    worker.join()
-    assert wait_for(qapp, lambda: lines, timeout=5)
-    assert lines[0].endswith("запись из фонового потока") and lines[0].startswith("[")
+    received = []
+    bridge.event_received.connect(received.append)
     bridge.close()
-    get_logger().info("после закрытия")
+    service._emit(ScheduleChanged(False, None))
     qapp.processEvents()
-    assert len(lines) == 1
+    assert received == []

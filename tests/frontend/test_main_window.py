@@ -1,11 +1,12 @@
 """Окно поверх настоящего бэкенда: команды уходят в сервис, события приходят обратно."""
+import os
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 from PyQt5.QtCore import QTime
 
-from backup_app.backend import AppConfig, BackupService, SettingsStore, setup_file_logging
+from backup_app.backend import AppConfig, AppProblem, BackupService, SettingsStore, setup_file_logging
 from backup_app.backend import autostart
 from backup_app.backend import copier as copier_module
 from backup_app.backend.safety import system_paths
@@ -101,8 +102,8 @@ def wait_backup(env, window):
     return wait_for(env.app, lambda: not window._running and not window.service.is_running)
 
 
-def log_text(window):
-    return window.log_text.toPlainText()
+def history_text(window):
+    return window.history_text.toPlainText()
 
 
 def ini_path(path):
@@ -130,11 +131,12 @@ def slow_copy(monkeypatch, delay=0.05):
 
 
 # ------------------------------------------------------------------ старт
-def test_fresh_start_creates_log_and_tray(env):
+def test_fresh_start_has_empty_history_and_full_journal(env):
     window = env.window()
     assert window.tabs_widget.count() == 1
     assert window.tray is not None
-    assert "Файл настроек" in log_text(window)
+    assert history_text(window) == ""
+    assert window.history_text.placeholderText() == mw.HISTORY_EMPTY_TEXT
     assert "Файл настроек" in env.log_file()
     assert not window.service.schedule_active
     assert window.start_btn.isEnabled() and not window.stop_btn.isEnabled()
@@ -159,8 +161,10 @@ def test_manual_backup_copies_and_logs(env, tree):
     window.manual_backup()
     assert window._running and not window.manual_btn.isEnabled() and not window.cancel_btn.isHidden()
     assert wait_backup(env, window)
-    assert "✓ Успешно скопировано 3 файлов" in log_text(window)
-    assert "Успешно скопировано 3 файлов" in env.log_file()
+    lines = history_text(window).splitlines()
+    assert lines[0].endswith("  Ручное копирование: Без названия")
+    assert lines[1].endswith("  ✓ Успешно скопировано 3 файла")
+    assert "Успешно скопировано 3 файла" in env.log_file()
     assert len(list_rel(dst)) == 3
     assert window.manual_btn.isEnabled() and window.cancel_btn.isHidden()
     assert env.stored().last_backup_time is not None
@@ -181,7 +185,7 @@ def test_partial_result_is_a_warning(env, tree, monkeypatch):
 
     def failing(source, target):
         if source.endswith("a.txt"):
-            raise PermissionError("locked")
+            raise PermissionError(13, "Отказано в доступе")
         return real(source, target)
 
     monkeypatch.setattr(copier_module.shutil, "copy2", failing)
@@ -189,8 +193,10 @@ def test_partial_result_is_a_warning(env, tree, monkeypatch):
     fill_tab(window, [src / "docs"], [src / "single.txt"], dst)
     window.manual_backup()
     assert wait_backup(env, window)
-    assert "⚠ Скопировано 2 файлов, ошибок: 1" in log_text(window)
-    assert "Ошибка при копировании файла" in env.log_file()
+    history = history_text(window)
+    assert "⚠ Скопировано 2 файла, ошибок: 1" in history
+    assert "a.txt: нет доступа" in history and "Отказано в доступе" not in history
+    assert "Отказано в доступе" in env.log_file()
     assert env.notifications[-1][0] == "warning"
 
 
@@ -204,7 +210,7 @@ def test_cancel_backup(env, tree, monkeypatch):
     wait_for(env.app, lambda: list_rel(dst), timeout=5)
     window.cancel_backup()
     assert wait_backup(env, window)
-    assert "✗ Операция отменена" in log_text(window)
+    assert "✗ Операция отменена" in history_text(window)
     assert env.notifications[-1][0] == "warning"
     assert len(list_rel(dst)) < 22
 
@@ -219,18 +225,20 @@ def test_scheduled_backup_runs_when_time_comes(env, tree):
     assert service.schedule_active
     assert env.stored().timer_active is True and env.stored().timer_started_at is not None
     assert not window.start_btn.isEnabled() and window.stop_btn.isEnabled()
+    assert "Расписание запущено, следующее копирование:" in history_text(window)
 
     due = service.next_run
     service.tick(due + timedelta(seconds=1))
     assert service.next_run > due
     assert wait_backup(env, window)
     assert len(list_rel(dst)) == 2
-    assert "Начато плановое копирование" in log_text(window)
+    assert "Плановое копирование: Без названия" in history_text(window)
     assert env.notifications[0][1] == "Резервное копирование"
 
     window.stop_schedule()
     assert not service.schedule_active and env.stored().timer_active is False
     assert "остановлено" in window.next_backup_label.text()
+    assert history_text(window).splitlines()[-1].endswith("  Расписание остановлено")
 
 
 def test_scheduled_problems_never_open_dialogs(env, tree):
@@ -244,7 +252,7 @@ def test_scheduled_problems_never_open_dialogs(env, tree):
     env.app.processEvents()
     assert env.dialogs == []
     assert not window._running
-    assert "Плановое копирование не запущено" in log_text(window)
+    assert "✗ Плановое копирование не запущено" in history_text(window)
     assert env.notifications[-1][0] == "warning"
 
 
@@ -257,10 +265,10 @@ def test_scheduled_run_during_manual_run_is_skipped(env, tree, monkeypatch):
     window.start_schedule()
     window.manual_backup()
     window.service.tick(window.service.next_run + timedelta(seconds=1))
-    assert "уже выполняется" in log_text(window)
+    assert "⚠ Плановое копирование не запущено: в это время шло другое копирование" in history_text(window)
     assert wait_backup(env, window)
     assert len(list_rel(dst)) == 10
-    assert log_text(window).count("Успешно скопировано") == 1
+    assert history_text(window).count("Успешно скопировано") == 1
 
 
 def test_changing_schedule_while_active_updates_label(env, tree):
@@ -288,14 +296,14 @@ def test_resume_with_all_tabs_and_empty_last_tab(env, tree):
             "[Tab_1]\ntab_title=Пустая\n")
     window = env.window(resume_ini(src, dst, "copy_all_tabs=true\ntab_count=2\nactive_tab=1", tabs))
     assert window.service.schedule_active
-    assert "Расписание возобновлено" in log_text(window)
+    assert "Расписание возобновлено" in env.log_file() and "возобновлено" not in history_text(window)
     assert window.stop_btn.isEnabled() and "остановлено" not in window.next_backup_label.text()
 
 
 def test_resume_impossible_without_sources(env):
     window = env.window("[General]\ntimer_active=true\n[Tab_0]\ntab_title=Пустая\n")
     assert not window.service.schedule_active
-    assert "Расписание не возобновлено" in log_text(window)
+    assert "✗ Расписание не возобновлено" in history_text(window)
     assert env.stored().timer_active is False
 
 
@@ -303,10 +311,11 @@ def test_missed_run_is_executed_after_start(env, tree):
     src, dst = tree
     started = "2000-01-01T00:00:00"
     window = env.window(resume_ini(src, dst, f"timer_started_at={started}"))
-    assert "пропущено" in log_text(window)
+    assert "⚠ Пропущено плановое копирование" in history_text(window)
     assert window.service.tick() is True
     assert wait_backup(env, window)
     assert len(list_rel(dst)) == 3
+    assert "Плановое копирование: Данные" in history_text(window)
     assert env.stored().last_backup_time is not None
 
 
@@ -319,7 +328,7 @@ def test_close_hides_to_tray_instead_of_quitting(env, monkeypatch):
     window.close()
     assert window.isHidden() and not window._quitting
     assert quits == []
-    assert "свёрнуто в трей" in log_text(window)
+    assert "свёрнуто в трей" in env.log_file() and "трей" not in history_text(window)
     assert env.notifications[-1][1] == "Приложение работает в фоне"
     window.show()
     window.close()
@@ -445,3 +454,52 @@ def test_settings_are_saved_on_change(env):
     assert stored.period_type == "Еженедельно" and stored.weekday == 4
     assert stored.backup_time == "21:30" and stored.keep_history is False
     assert stored.max_file_size_gb == 0
+
+
+# -------------------------------------------------------- история копирования
+def test_history_from_previous_runs_is_shown_at_start(env):
+    recent = datetime.now() - timedelta(days=1)
+    old = datetime.now() - timedelta(days=400)
+    (env.dir / "history.txt").write_text(
+        f"{old:%d.%m.%Y %H:%M}  ✓ Старое копирование\n"
+        f"{recent:%d.%m.%Y %H:%M}  ⚠ Скопировано 2 файла, ошибок: 1\n"
+        "                    Не скопирован C:/Документы/отчёт.docx: файл занят другой программой\n",
+        encoding="utf-8")
+    window = env.window()
+    lines = history_text(window).splitlines()
+    assert len(lines) == 2
+    assert lines[0] == f"{recent:%d.%m.%Y %H:%M}  ⚠ Скопировано 2 файла, ошибок: 1"
+    assert lines[1].strip() == "Не скопирован C:/Документы/отчёт.docx: файл занят другой программой"
+
+
+def test_journal_button_opens_log_file(env, monkeypatch):
+    opened = []
+
+    class FakeDesktop:
+        @staticmethod
+        def openUrl(url):
+            opened.append(url.toLocalFile())
+            return True
+
+    monkeypatch.setattr(mw, "QDesktopServices", FakeDesktop)
+    window = env.window()
+    window.journal_btn.click()
+    assert [os.path.normpath(path) for path in opened] == [os.path.normpath(window.service.log_path)]
+
+
+def test_journal_button_without_journal_explains(env, monkeypatch):
+    window = env.window()
+    monkeypatch.setattr(window.service, "_log_path", None)
+    window.journal_btn.click()
+    assert env.dialogs[-1][:2] == ("information", "Подробный журнал")
+
+
+def test_app_problem_shows_dialog_or_tray_notification(env):
+    window = env.window()
+    window.show()
+    window.service._emit(AppProblem("Не удалось сохранить настройки", "диск защищён от записи"))
+    assert env.dialogs[-1] == ("warning", "Не удалось сохранить настройки", "диск защищён от записи")
+    window.show_notifications_cb.setChecked(False)
+    window.hide()
+    window.service._emit(AppProblem("Не удалось проверить автозапуск", "нет доступа"))
+    assert env.notifications[-1] == ("warning", "Не удалось проверить автозапуск", "нет доступа")
