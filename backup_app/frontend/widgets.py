@@ -15,13 +15,13 @@ from PyQt5.QtGui import (QColor, QFontMetrics, QFontMetricsF, QIcon, QPainter, Q
 from PyQt5 import sip
 from PyQt5.QtWidgets import (QAbstractButton, QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QFrame,
                              QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QLayout, QLineEdit, QListView,
-                             QProgressBar, QPushButton, QSizePolicy, QSplitter, QSplitterHandle, QStyle,
+                             QProgressBar, QPushButton, QSizePolicy, QSpacerItem, QSplitter, QSplitterHandle, QStyle,
                              QStyledItemDelegate, QStyleOptionButton, QStyleOptionFrame, QStylePainter, QVBoxLayout,
                              QWidget, QWidgetItem)
 
 from . import icons
-from .theme import (BUTTON_HEIGHT, BUTTON_HEIGHT_SMALL, C, faded, font, has_keyboard_focus, keyboard_focus_reason,
-                    mix, px_to_pt, set_props)
+from .theme import (BUTTON_HEIGHT, BUTTON_HEIGHT_SMALL, C, exact, faded, font, font_exact, has_keyboard_focus,
+                    keyboard_focus_reason, mix, px_to_pt, set_props)
 
 DAY_SHORT = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
 DAY_FULL = ("Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье")
@@ -176,6 +176,207 @@ class FlowLayout(QLayout):
         return y + line_h - rect.y() + m.bottom()
 
 
+class _FlexProps(NamedTuple):
+    basis: Optional[int]       # None — по ширине содержимого (flex-basis: auto)
+    grow: float
+    shrink: float
+    min_width: Optional[int]   # None — минимальная ширина виджета (min-width: auto)
+    max_width: Optional[int]
+    align: Optional[str]
+
+
+class FlexRow(QLayout):
+    """Строка с переносом по правилам CSS flex-wrap: у каждого элемента basis/grow/shrink/min-width.
+
+    Элементы раскладываются по строкам: элемент, который не помещается, начинает новую строку;
+    в каждой строке лишняя ширина делится по grow, нехватка — по shrink × basis (не меньше min-width).
+    align: center (align-items: center), start или stretch — по высоте строки.
+
+        row = FlexRow(widget, hgap=8, vgap=8)
+        row.add(title_block, basis=280, grow=1, min_width=0)
+        row.add_spacer()                  # <div style="flex: 1">
+        row.add(button)
+    """
+
+    def __init__(self, parent=None, hgap: int = 8, vgap: int = 8, align: str = "center"):
+        super().__init__(parent)
+        self._items: List[Tuple[object, _FlexProps]] = []
+        self._h, self._v, self._align = hgap, vgap, align
+        self._cache: dict = {}
+        self.setContentsMargins(0, 0, 0, 0)
+
+    # --- наполнение
+    def add(self, widget: QWidget, basis: Optional[int] = None, grow: float = 0, shrink: float = 1,
+            min_width: Optional[int] = None, max_width: Optional[int] = None, align: Optional[str] = None) -> QWidget:
+        self.addChildWidget(widget)
+        self._items.append((QWidgetItem(widget), _FlexProps(basis, grow, shrink, min_width, max_width, align)))
+        self.invalidate()
+        return widget
+
+    def add_spacer(self, grow: float = 1) -> None:
+        """Растяжка flex: 1 (ширина 0, забирает свободное место строки)."""
+        self._items.append((QSpacerItem(0, 0, QSizePolicy.Expanding, QSizePolicy.Minimum),
+                            _FlexProps(0, grow, 1, 0, None, None)))
+        self.invalidate()
+
+    def addItem(self, item):  # noqa: N802
+        self._items.append((item, _FlexProps(None, 0, 1, None, None, None)))
+
+    def addWidget(self, widget):  # noqa: N802
+        self.add(widget)
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, index):  # noqa: N802
+        return self._items[index][0] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index):  # noqa: N802
+        if 0 <= index < len(self._items):
+            item = self._items.pop(index)[0]
+            self.invalidate()
+            return item
+        return None
+
+    def invalidate(self):
+        self._cache = {}
+        super().invalidate()
+
+    def expandingDirections(self):  # noqa: N802
+        return Qt.Horizontal
+
+    def hasHeightForWidth(self):  # noqa: N802
+        return True
+
+    def heightForWidth(self, width):  # noqa: N802
+        m = self.contentsMargins()
+        return self._solve(width - m.left() - m.right())[1] + m.top() + m.bottom()
+
+    def sizeHint(self):  # noqa: N802
+        m = self.contentsMargins()
+        visible = self._visible()
+        width = sum(self._hint_width(item, p) for item, p in visible) + self._h * max(0, len(visible) - 1)
+        return QSize(width + m.left() + m.right(), self.heightForWidth(width + m.left() + m.right()))
+
+    def minimumSize(self):  # noqa: N802
+        m = self.contentsMargins()
+        width, height = 0, 0
+        for item, p in self._visible():
+            width = max(width, self._min_width(item, p))
+            height = max(height, item.minimumSize().height())
+        return QSize(width + m.left() + m.right(), height + m.top() + m.bottom())
+
+    def setGeometry(self, rect):  # noqa: N802
+        super().setGeometry(rect)
+        m = self.contentsMargins()
+        area = rect.adjusted(m.left(), m.top(), -m.right(), -m.bottom())
+        places, _height = self._solve(area.width())
+        for item, (x, y, w, h) in places:
+            item.setGeometry(QRect(area.x() + x, area.y() + y, w, h))
+
+    # --- расчет
+    def _visible(self):
+        """Показанные элементы; растяжка (QSpacerItem) Qt считает пустой, но она участвует в раскладке."""
+        return [(item, p) for item, p in self._items if isinstance(item, QSpacerItem) or not item.isEmpty()]
+
+    @staticmethod
+    def _min_width(item, p: _FlexProps) -> int:
+        if p.min_width is not None:
+            return p.min_width
+        return item.minimumSize().width() if item.widget() is not None else 0
+
+    def _hint_width(self, item, p: _FlexProps) -> int:
+        base = p.basis if p.basis is not None else item.sizeHint().width()
+        top = p.max_width if p.max_width is not None else item.maximumSize().width()
+        return max(self._min_width(item, p), min(base, top))
+
+    def _height(self, item, width: int) -> int:
+        if item.hasHeightForWidth():
+            h = item.heightForWidth(width)
+        else:
+            h = item.sizeHint().height()
+        return max(item.minimumSize().height(), min(h, item.maximumSize().height()))
+
+    def _solve(self, width: int):
+        """Места элементов [(item, (x, y, w, h))] и общая высота для ширины width."""
+        width = max(0, int(width))
+        cached = self._cache.get(width)
+        if cached is not None:
+            return cached
+        visible = self._visible()
+        lines, line, used = [], [], 0
+        for item, p in visible:
+            size = self._hint_width(item, p)
+            extra = size + (self._h if line else 0)
+            if line and used + extra > width:
+                lines.append(line)
+                line, used, extra = [], 0, size
+            line.append([item, p, size])
+            used += extra
+        if line:
+            lines.append(line)
+        places, y = [], 0
+        for index, line in enumerate(lines):
+            self._resolve(line, width)
+            x, heights = 0, []
+            for item, _p, size in line:
+                heights.append(self._height(item, size))
+            line_h = max(heights) if heights else 0
+            for (item, p, size), h in zip(line, heights):
+                align = p.align or self._align
+                if align == "stretch":
+                    h = max(h, min(line_h, item.maximumSize().height()))
+                    top = 0
+                elif align == "start":
+                    top = 0
+                else:
+                    top = (line_h - h) // 2
+                places.append((item, (x, y + top, size, h)))
+                x += size + self._h
+            y += line_h + (self._v if index < len(lines) - 1 else 0)
+        result = (places, y)
+        self._cache[width] = result
+        return result
+
+    def _resolve(self, line, width: int) -> None:
+        """Ширины элементов строки: свободное место по grow, нехватка — по shrink × basis."""
+        gaps = self._h * (len(line) - 1)
+        for _ in range(3):  # повторы — когда элементы упираются в min/max
+            free = width - gaps - sum(entry[2] for entry in line)
+            if free > 0:
+                growing = [e for e in line if e[1].grow > 0 and e[2] < self._max(e)]
+                total = sum(e[1].grow for e in growing)
+                if not growing or total <= 0:
+                    return
+                rest = free
+                for e in growing:
+                    add = int(free * e[1].grow / total) if e is not growing[-1] else rest
+                    new = min(self._max(e), e[2] + add)
+                    rest -= new - e[2]
+                    e[2] = new
+                if rest <= 0:
+                    return
+            elif free < 0:
+                shrinking = [e for e in line if e[1].shrink > 0 and e[2] > self._min_width(e[0], e[1])]
+                total = sum(e[1].shrink * max(1, e[2]) for e in shrinking)
+                if not shrinking or total <= 0:
+                    return
+                need = -free
+                for e in shrinking:
+                    cut = math.ceil(need * e[1].shrink * max(1, e[2]) / total)
+                    e[2] = max(self._min_width(e[0], e[1]), e[2] - cut)
+                if width - gaps - sum(entry[2] for entry in line) >= 0:
+                    return
+            else:
+                return
+
+    @staticmethod
+    def _max(entry) -> int:
+        item, p, _size = entry
+        top = item.maximumSize().width()
+        return min(top, p.max_width) if p.max_width is not None else top
+
+
 # =========================================================================== текст
 class ElidedLabel(QLabel):
     """Однострочная надпись с «…», если не помещается (text-overflow: ellipsis). Полный текст — в подсказке."""
@@ -201,17 +402,26 @@ class ElidedLabel(QLabel):
             if self.toolTip() != tip:
                 self.setToolTip(tip)
 
+    def _metrics(self) -> QFontMetrics:
+        # Qt5 округляет дробный размер шрифта (12.5px → 13px): ширина текста — как у дробного размера макета
+        return QFontMetrics(exact(self.font()))
+
     def is_elided(self) -> bool:
         width = self.contentsRect().width()
-        return self.fontMetrics().horizontalAdvance(self.text()) > width
+        return self._metrics().horizontalAdvance(self.text()) > width
 
     def elided_text(self) -> str:
-        return self.fontMetrics().elidedText(self.text(), Qt.ElideRight, max(0, self.contentsRect().width()))
+        return self._metrics().elidedText(self.text(), Qt.ElideRight, max(0, self.contentsRect().width()))
+
+    def sizeHint(self):  # noqa: N802
+        hint = super().sizeHint()
+        extra = self.fontMetrics().horizontalAdvance(self.text()) - self._metrics().horizontalAdvance(self.text())
+        return QSize(hint.width() - max(0, extra), hint.height())
 
     def minimumSizeHint(self):  # noqa: N802
         hint = super().minimumSizeHint()
         margins = self.width() - self.contentsRect().width() if self.width() else 0
-        return QSize(min(hint.width(), self.fontMetrics().horizontalAdvance("…") + margins + 8), hint.height())
+        return QSize(min(hint.width(), self._metrics().horizontalAdvance("…") + margins + 8), hint.height())
 
     def resizeEvent(self, event):  # noqa: N802
         super().resizeEvent(event)
@@ -225,6 +435,7 @@ class ElidedLabel(QLabel):
     def paintEvent(self, event):  # noqa: N802
         painter = QPainter(self)
         self.drawFrame(painter)
+        painter.setFont(exact(self.font()))
         rect = self.contentsRect()
         self.style().drawItemText(painter, rect, int(self.alignment()) | Qt.TextSingleLine, self.palette(),
                                   self.isEnabled(), self.elided_text(), self.foregroundRole())
@@ -255,6 +466,7 @@ class WrapAnywhereLabel(QFrame):
         if kind:
             self.setProperty("kind", kind)
         self._text, self._bold = "", ""
+        self._align = Qt.AlignLeft
         self._line_height = line_height
         policy = QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         policy.setHeightForWidth(True)
@@ -267,6 +479,11 @@ class WrapAnywhereLabel(QFrame):
     def setText(self, text: str) -> None:  # noqa: N802
         self.set_text(text)
 
+    def set_alignment(self, alignment) -> None:
+        """Выравнивание строк: Qt.AlignLeft (по умолчанию) или Qt.AlignHCenter (text-align: center)."""
+        self._align = alignment
+        self.update()
+
     def set_text(self, text: str, bold_prefix: str = "") -> None:
         self._text, self._bold = text, bold_prefix
         self.updateGeometry()
@@ -278,10 +495,10 @@ class WrapAnywhereLabel(QFrame):
 
     def _layout(self, width: float) -> Tuple[QTextLayout, float]:
         full = self._bold + self._text
-        layout = QTextLayout(full, self.font())
+        layout = QTextLayout(full, exact(self.font()))
         option = QTextOption()
         option.setWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
-        option.setAlignment(Qt.AlignLeft)
+        option.setAlignment(self._align)
         layout.setTextOption(option)
         if self._bold:
             fmt = QTextCharFormat()
@@ -291,7 +508,7 @@ class WrapAnywhereLabel(QFrame):
             rng = QTextLayout.FormatRange()
             rng.start, rng.length, rng.format = 0, len(self._bold), fmt
             layout.setFormats([rng])
-        metrics = QFontMetricsF(self.font())
+        metrics = QFontMetricsF(exact(self.font()))
         step = metrics.height()
         px = self.font().pixelSize() if self.font().pixelSize() > 0 else self.font().pointSizeF() / px_to_pt(1)
         if self._line_height:
@@ -320,7 +537,7 @@ class WrapAnywhereLabel(QFrame):
 
     def sizeHint(self):  # noqa: N802
         mw, _ = self._margins()
-        text_w = QFontMetrics(self.font()).horizontalAdvance(self._bold + self._text) + 2
+        text_w = QFontMetrics(exact(self.font())).horizontalAdvance(self._bold + self._text) + 2
         w = min(text_w, 600) + mw
         return QSize(w, self.heightForWidth(w))
 
@@ -381,7 +598,7 @@ class Button(QPushButton):
     def _apply_size(self) -> None:
         h = BUTTON_HEIGHT_SMALL if self._small else BUTTON_HEIGHT
         if self._variant == "nav":
-            h = 34
+            h = 32  # .tab макета: 7 + 18.2 + 7
         if self._icon_only:
             self.setFixedSize(h, h)
         else:
@@ -1417,7 +1634,7 @@ class TabDelegate(QStyledItemDelegate):
         tx = r.left() + 36
         tw = max(0, int(r.right() - 10 - tx))
         name_font = font("semibold", 13)
-        sub_font = font("regular", 11.5)
+        sub_font = font_exact("regular", 11.5)
         p.setFont(name_font)
         p.setPen(QColor(C.TEXT))
         name = QFontMetrics(name_font).elidedText(index.data(Qt.DisplayRole) or "", Qt.ElideRight, tw)
@@ -1931,6 +2148,14 @@ def confirm(parent: QWidget, title: str, text: str = "", ok_text: str = "Да", 
 class _TitleLineEdit(QLineEdit):
     """Поле названия: без фокуса длинный текст обрезается с «…» с начала строки (text-overflow: ellipsis)."""
 
+    hint_width = 0  # ширина по тексту (TitleEdit._fit): поле растет с названием, как size="len+2" в макете
+
+    def sizeHint(self):  # noqa: N802
+        hint = super().sizeHint()
+        if self.hint_width:
+            hint.setWidth(self.hint_width)
+        return hint
+
     def focusOutEvent(self, event):  # noqa: N802
         super().focusOutEvent(event)
         self.setCursorPosition(0)
@@ -1977,7 +2202,7 @@ class TitleEdit(QWidget):
         self.line_edit = _TitleLineEdit()
         self.line_edit.setProperty("kind", "title")
         self.line_edit.setAccessibleName("Название вкладки")
-        self.line_edit.setFixedHeight(34)
+        self.line_edit.setFixedHeight(33)  # 18px × 1.4 + поля 3 + рамка 1
         if max_length:
             self.line_edit.setMaxLength(max_length)
         self.pencil = IconLabel("pencil", C.FAINT, 15)
@@ -2036,8 +2261,10 @@ class TitleEdit(QWidget):
         by_size = fm.averageCharWidth() * self.chars()
         by_text = fm.horizontalAdvance(self.line_edit.text()) + 6
         self.line_edit.setMinimumWidth(min(by_size, fm.averageCharWidth() * 6) + frame)
-        self._wanted = max(by_size, by_text) + frame
+        # как size="len+2" (не больше 48 знаков) в макете: длиннее — текст обрезается «…»
+        self._wanted = (max(by_size, by_text) if self.chars() < 48 else by_size) + frame
         self.line_edit.setMaximumWidth(self._wanted)
+        self.line_edit.hint_width = self._wanted
         self.line_edit.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.line_edit.updateGeometry()
 

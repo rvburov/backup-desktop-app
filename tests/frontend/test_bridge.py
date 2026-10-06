@@ -13,11 +13,11 @@ def test_events_from_background_thread_arrive_in_gui_thread(qapp, tmp_path):
     bridge.event_received.connect(
         lambda event: received.append((event, threading.current_thread() is threading.main_thread())))
     try:
-        worker = threading.Thread(target=lambda: service._emit(ScheduleChanged(False, None)))
+        worker = threading.Thread(target=lambda: service._emit(ScheduleChanged(())))
         worker.start()
         worker.join()
         assert wait_for(qapp, lambda: received, timeout=5)
-        assert received == [(ScheduleChanged(False, None), True)]
+        assert received == [(ScheduleChanged(()), True)]
     finally:
         bridge.close()
 
@@ -28,6 +28,6 @@ def test_events_stop_after_close(qapp, tmp_path):
     received = []
     bridge.event_received.connect(received.append)
     bridge.close()
-    service._emit(ScheduleChanged(False, None))
+    service._emit(ScheduleChanged(()))
     qapp.processEvents()
     assert received == []

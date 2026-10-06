@@ -175,6 +175,37 @@ def font(role: str = "regular", px: float = BASE_FONT_PX, letter_spacing: float 
     return f
 
 
+def font_exact(role: str = "regular", px: float = BASE_FONT_PX) -> QFont:
+    """QFont для рисования с шириной текста как у дробного размера макета (11.5px, 12.5px).
+
+    Qt5 округляет размер шрифта до целого пикселя (12.5 → 13), и текст выходит шире, чем в макете.
+    Здесь берется меньший целый размер, а ширина знаков растягивается до дробного (PercentageSpacing).
+    """
+    whole = int(px)
+    if whole == px or whole <= 0:
+        return font(role, px)
+    f = font(role, whole)
+    f.setLetterSpacing(QFont.PercentageSpacing, px / whole * 100.0)
+    return f
+
+
+def font_px(f: QFont) -> float:
+    """Размер шрифта в пикселях макета (дробный, как задан в QSS или font())."""
+    return f.pixelSize() if f.pixelSize() > 0 else f.pointSizeF() / px_to_pt(1)
+
+
+def exact(f: QFont) -> QFont:
+    """Тот же шрифт с шириной текста как у дробного размера (см. font_exact); целый размер — без изменений."""
+    px = font_px(f)
+    whole = int(px + 0.01)
+    if abs(px - whole) < 0.01 or whole <= 0:
+        return f
+    result = QFont(f)
+    result.setPointSizeF(px_to_pt(whole))
+    result.setLetterSpacing(QFont.PercentageSpacing, px / whole * 100.0)
+    return result
+
+
 def _fs(px: float) -> str:
     """font-size для QSS: целые px как есть, дробные — в pt (QSS не понимает дробные px)."""
     if float(px).is_integer():
@@ -229,7 +260,8 @@ def build_palette() -> QPalette:
 # Размер шрифта (px) однострочных надписей QLabel[kind]: высота строки = px * LINE_HEIGHT.
 _TEXT_KINDS = {
     "h1": 18, "h2": 13.5, "h3": 13, "medium": 13, "semibold": 13, "muted": 12, "muted-sm": 11.5,
-    "secondary": 12.5, "faint": 12, "caps": 11, "count": 11, "warn": 12, "danger": 11.5, "ok": 12.5,
+    "secondary": 12.5, "secondary-muted": 12.5, "faint": 12, "caps": 11, "count": 11, "warn": 12, "danger": 11.5,
+    "ok": 12.5, "detail": 12, "result": 12.5,
     "status": 12.5, "mono": 11, "mono-body": 12, "mono-time": 11.5,
 }
 
@@ -271,6 +303,7 @@ QLabel[kind="semibold"], QWidget[kind="semibold"] {{ {semi} }}
 QLabel[kind="muted"], QWidget[kind="muted"] {{ {_fs(12)} color: {C.MUTED}; }}
 QLabel[kind="muted-sm"] {{ {_fs(11.5)} color: {C.MUTED}; }}
 QLabel[kind="secondary"], QWidget[kind="secondary"] {{ {_fs(12.5)} color: {C.TEXT2}; }}
+QLabel[kind="secondary-muted"], QWidget[kind="secondary-muted"] {{ {_fs(12.5)} color: {C.MUTED}; }}
 QLabel[kind="faint"] {{ {_fs(12)} color: {C.FAINT}; }}
 QLabel[kind="caps"] {{ {semi} {_fs(11)} color: {C.MUTED}; }}
 QLabel[kind="count"] {{ {_fs(11)} color: {C.MUTED}; }}
@@ -280,6 +313,13 @@ QLabel[kind="ok"] {{ {med} {_fs(12.5)} color: {C.OK}; }}
 QLabel[kind="mono"], QWidget[kind="mono"] {{ {mono} {_fs(11)} color: {C.MUTED}; }}
 QLabel[kind="mono-body"], QWidget[kind="mono-body"] {{ {mono} {_fs(12)} color: {C.TEXT}; }}
 QLabel[kind="mono-time"] {{ {mono} {_fs(11.5)} color: {C.MUTED}; }}
+QLabel[kind="detail"] {{ {_fs(12)} color: {C.TEXT2}; }}
+QLabel[kind="result"] {{ {semi} {_fs(12.5)} color: {C.OK}; }}
+QLabel[kind="result"][tone="warn"] {{ color: {C.WARN}; }}
+QLabel[kind="result"][tone="danger"] {{ color: {C.DANGER}; }}
+QLabel[kind="result-icon"] {{ {semi} {_fs(13)} color: {C.OK}; }}
+QLabel[kind="result-icon"][tone="warn"] {{ color: {C.WARN}; }}
+QLabel[kind="result-icon"][tone="danger"] {{ color: {C.DANGER}; }}
 QLabel[kind="status"] {{ {_fs(12.5)} color: {C.MUTED}; }}
 QLabel[kind="status"][tone="run"] {{ color: {C.ACCENT}; }}
 QLabel[kind="status"][tone="warn"] {{ color: {C.WARN}; }}
@@ -297,7 +337,7 @@ QLabel[kind="note"], QWidget[kind="note"] {{ {_fs(12.5)} color: {C.MUTED}; backg
     border-radius: 6px; padding: 10px 12px; }}
 QLabel[kind="note-sm"], QWidget[kind="note-sm"] {{ {_fs(12)} color: {C.MUTED}; background: {C.NOTE_BG};
     border-radius: 6px; padding: 9px 11px; }}
-QLabel[kind="empty"], QWidget[kind="empty"] {{ {_fs(12.5)} color: {C.MUTED}; border: 1.5px dashed {C.INPUT};
+QLabel[kind="empty"], QWidget[kind="empty"] {{ {_fs(12.5)} color: {C.MUTED}; border: 1px dashed {C.INPUT};
     border-radius: 8px; padding: 18px 12px; }}
 /* строка текста высотой line-height 1.4, как в макете (текст по центру строки) */
 {_line_boxes()}
@@ -311,6 +351,7 @@ QFrame[kind="card-footer"] {{ background: {C.FOOTER_BG}; border: none; border-to
 QFrame[kind="divider"] {{ background: {C.DIVIDER}; border: none; min-height: 1px; max-height: 1px; }}
 QFrame[kind="vdivider"] {{ background: {C.DIVIDER}; border: none; min-width: 1px; max-width: 1px; }}
 QFrame[kind="side-divider"] {{ background: {C.SIDE_DIVIDER}; border: none; min-height: 1px; max-height: 1px; }}
+QFrame[kind="col-left"] {{ background: transparent; border: none; border-right: 1px solid {C.DIVIDER}; }}
 QFrame[kind="panel"] {{ background: {C.CARD}; border: none; border-top: 1px solid {C.BORDER}; }}
 QFrame[kind="row"] {{ background: transparent; border: none; border-top: 1px solid {C.DIVIDER}; }}
 QFrame[kind="row"]:hover {{ background: {C.ROW_HOVER}; }}
@@ -367,10 +408,12 @@ QPushButton[variant="danger-solid"] {{ background: {C.DANGER}; border-color: {C.
 QPushButton[variant="danger-solid"]:hover {{ background: {C.DANGER_HOVER}; border-color: {C.DANGER_HOVER}; }}
 QPushButton[variant="danger-solid"][kbfocus="true"] {{ border-color: #5C0F09; }}
 
-QPushButton[variant="toast-close"] {{ background: transparent; border-color: transparent; }}
+QPushButton[variant="toast-close"] {{ background: transparent; border-color: transparent; min-height: 22px;
+    max-height: 22px; }}
 QPushButton[variant="toast-close"]:hover {{ background: rgba(255, 255, 255, 0.12); }}
 QPushButton[variant="toast-close"][kbfocus="true"] {{ border-color: {C.TOAST_INFO}; }}
-QPushButton[variant="notice-close"] {{ background: transparent; border-color: transparent; }}
+QPushButton[variant="notice-close"] {{ background: transparent; border-color: transparent; min-height: 20px;
+    max-height: 20px; }}
 QPushButton[variant="notice-close"]:hover {{ background: rgba(142, 28, 18, 0.08); }}
 QPushButton[variant="notice-close"][kbfocus="true"] {{ border-color: {C.NOTICE_TEXT}; }}
 QPushButton[variant="stepper"] {{ background: transparent; border: 1px solid transparent; border-radius: 0;
@@ -380,7 +423,7 @@ QPushButton[variant="stepper"][kbfocus="true"] {{ border-color: {C.ACCENT}; }}
 
 /* пункт боковой панели («Настройки»): как строка вкладки */
 QPushButton[variant="nav"] {{ background: transparent; border: 1px solid transparent; border-radius: 6px;
-    text-align: left; padding: 0 9px; min-height: 32px; }}
+    text-align: left; padding: 0 9px; min-height: 30px; }}
 QPushButton[variant="nav"]:hover {{ background: {C.SIDE_HOVER}; }}
 QPushButton[variant="nav"]:checked {{ background: {C.CARD}; border-color: {C.RING}; }}
 QPushButton[variant="nav"][kbfocus="true"] {{ border-color: {C.ACCENT}; }}
@@ -413,7 +456,7 @@ QLineEdit[mono="true"] {{ {mono} {_fs(12)} }}
 QLineEdit[small="true"] {{ {_fs(12.5)} min-height: {FIELD_HEIGHT_SMALL - 2}px;
     max-height: {FIELD_HEIGHT_SMALL - 2}px; }}
 QLineEdit[kind="title"] {{ {semi} {_fs(18)} background: transparent; border: 1px solid transparent;
-    padding: 2px 6px; min-height: 28px; max-height: 32px; }}
+    padding: 2px 6px; min-height: 27px; max-height: 32px; }}
 QLineEdit[kind="title"]:hover {{ background: {C.CARD}; border-color: {C.INPUT}; }}
 QLineEdit[kind="title"]:focus {{ background: {C.CARD}; border-color: {C.ACCENT}; }}
 /* у счетчиков нет стрелок, как у полей макета: значение вводится с клавиатуры, стрелками или колесом */
