@@ -4,7 +4,7 @@ import time
 
 
 def make_tree(root, spec):
-    """Создаёт дерево файлов: {имя: содержимое | {вложенное дерево}}."""
+    """Создает дерево файлов: {имя: содержимое | {вложенное дерево}}."""
     root = str(root)
     os.makedirs(root, exist_ok=True)
     for name, value in spec.items():
@@ -36,7 +36,7 @@ def pump(app, milliseconds):
 
 
 def wait_for(app, condition, timeout=15.0):
-    """Ждёт выполнения условия, обрабатывая события Qt."""
+    """Ждет выполнения условия, обрабатывая события Qt."""
     deadline = time.monotonic() + timeout
     while not condition() and time.monotonic() < deadline:
         app.processEvents()

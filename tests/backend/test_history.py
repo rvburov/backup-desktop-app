@@ -26,10 +26,10 @@ def write_entries(path, *entries, encoding="utf-8"):
 
 def test_entry_lines_show_time_text_and_indented_details():
     item = HistoryEntry(datetime(2026, 10, 8, 9, 1), "⚠ Скопировано 2 файла, ошибок: 1",
-                        ("Не скопирован C:/Документы/отчёт.docx: файл занят другой программой",))
+                        ("Не скопирован C:/Документы/отчет.docx: файл занят другой программой",))
     assert item.lines() == [
         "08.10.2026 09:01  ⚠ Скопировано 2 файла, ошибок: 1",
-        DETAIL_INDENT + "Не скопирован C:/Документы/отчёт.docx: файл занят другой программой",
+        DETAIL_INDENT + "Не скопирован C:/Документы/отчет.docx: файл занят другой программой",
     ]
 
 
@@ -48,7 +48,7 @@ def test_limit_details_keeps_first_ones_and_counts_the_rest():
     details = [f"ошибка {number}" for number in range(MAX_DETAILS + 5)]
     limited = limit_details(details)
     assert limited[:MAX_DETAILS] == tuple(details[:MAX_DETAILS])
-    assert limited[MAX_DETAILS:] == ("…и ещё 5, см. подробный журнал",)
+    assert limited[MAX_DETAILS:] == ("…и еще 5, см. подробный журнал",)
     assert limit_details(["одна", ""]) == ("одна",)
 
 
@@ -85,7 +85,7 @@ def test_entries_expire_while_the_app_keeps_running(tmp_path):
 
 def test_file_saved_with_bom_is_read(tmp_path):
     path = tmp_path / "history.txt"
-    item = entry(1, "✓ Файл сохранён в Блокноте")
+    item = entry(1, "✓ Файл сохранен в Блокноте")
     write_entries(path, item, encoding="utf-8-sig")
     assert HistoryStore(str(path), now=Clock(NOW)).entries() == [item]
 
@@ -103,6 +103,6 @@ def test_unreadable_file_is_only_appended(tmp_path, monkeypatch):
     assert store.entries() == []
     store.add(entry(0, "✓ Новое копирование"))
     clock.moment = NOW + timedelta(days=400)
-    store.add(HistoryEntry(clock.moment, "✓ Ещё одно копирование"))
+    store.add(HistoryEntry(clock.moment, "✓ Еще одно копирование"))
     text = path.read_text(encoding="utf-8")
-    assert "Старое копирование" in text and "Новое копирование" in text and "Ещё одно копирование" in text
+    assert "Старое копирование" in text and "Новое копирование" in text and "Еще одно копирование" in text

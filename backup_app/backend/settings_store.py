@@ -59,7 +59,7 @@ class AppConfig:
         return self.tabs[0]
 
 
-# Поля, которые меняет пользователь в окне. Остальные поля ведёт сервис.
+# Поля, которые меняет пользователь в окне. Остальные поля ведет сервис.
 EDITABLE_FIELDS = (
     "period_type", "backup_time", "weekday", "monthday", "keep_history", "create_backup_folder",
     "copy_folder_contents", "copy_all_tabs", "minimize_to_tray", "show_notifications", "run_missed",

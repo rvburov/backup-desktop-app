@@ -1,4 +1,4 @@
-"""Пути к иконкам с учётом сборки PyInstaller."""
+"""Пути к иконкам с учетом сборки PyInstaller."""
 import os
 import sys
 

@@ -48,7 +48,7 @@ def limit_details(details: Sequence[str], limit: int = MAX_DETAILS) -> Tuple[str
     items = [detail for detail in details if detail]
     if len(items) <= limit:
         return tuple(items)
-    return tuple(items[:limit]) + (f"…и ещё {len(items) - limit}, см. подробный журнал",)
+    return tuple(items[:limit]) + (f"…и еще {len(items) - limit}, см. подробный журнал",)
 
 
 def parse_history(text: str) -> List[HistoryEntry]:
@@ -97,7 +97,7 @@ class HistoryStore:
             return list(self._loaded())
 
     def add(self, entry: HistoryEntry) -> None:
-        """Добавляет запись. Ошибку записи файла передаёт вызывающему как OSError."""
+        """Добавляет запись. Ошибку записи файла передает вызывающему как OSError."""
         with self._lock:
             entries = self._loaded()
             entries.append(entry)

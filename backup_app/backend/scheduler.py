@@ -1,4 +1,4 @@
-"""Расчёт времени планового копирования. Чистые функции без Qt."""
+"""Расчет времени планового копирования. Чистые функции без Qt."""
 import calendar
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta

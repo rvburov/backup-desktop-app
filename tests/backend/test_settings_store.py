@@ -93,7 +93,7 @@ def test_single_folder_saved_by_qsettings_is_read(tmp_path):
 
 
 def test_saved_file_is_readable_by_old_versions(tmp_path):
-    """Один путь пишется обычной строкой: её понимает и QSettings, и прежний код."""
+    """Один путь пишется обычной строкой: ее понимает и QSettings, и прежний код."""
     store_at(tmp_path).save(AppConfig(tabs=[TabConfig("A", ["C:/один"], [], "D:/x")]))
     text = (tmp_path / "settings.ini").read_text(encoding="utf-8")
     assert "source_folders=C:/один" in text
@@ -112,7 +112,7 @@ def test_shipped_example_ini_loads(tmp_path):
 
 
 def test_missing_paths_are_kept(tmp_path):
-    """Отключённый диск не должен стирать пути из настроек."""
+    """Отключенный диск не должен стирать пути из настроек."""
     config = AppConfig(tabs=[TabConfig("USB", ["X:/нет такого диска"], ["X:/нет.txt"], "Y:/нет")])
     store_at(tmp_path).save(config)
     assert store_at(tmp_path).load().tabs == config.tabs

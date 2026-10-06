@@ -22,7 +22,7 @@ MAX_PATH_LENGTH = 240
 DEFAULT_MAX_FILE_SIZE_GB = 2
 GB = 1024 ** 3
 
-# Запас длины пути под суффикс «_дд.мм.гггг_чч-мм-сс_(N)», который добавляется при совпадении имён.
+# Запас длины пути под суффикс «_дд.мм.гггг_чч-мм-сс_(N)», который добавляется при совпадении имен.
 NAME_SUFFIX_RESERVE = 26
 # Самое короткое имя файла, до которого допускается укорачивание.
 MIN_NAME_LENGTH = 24
@@ -35,7 +35,7 @@ WINDOWS_ROOT_NAMES = frozenset({
 
 
 def normalize(path: str) -> str:
-    """Абсолютный путь в единой форме для сравнения (на Windows без учёта регистра)."""
+    """Абсолютный путь в единой форме для сравнения (на Windows без учета регистра)."""
     return os.path.normcase(os.path.abspath(path))
 
 
@@ -143,7 +143,7 @@ class ProtectedPaths:
         return None
 
     def is_child(self, parent_normalized: str, path: str) -> bool:
-        """Проверка элемента папки при обходе: всё, что глубже системных путей, отсекается раньше."""
+        """Проверка элемента папки при обходе: все, что глубже системных путей, отсекается раньше."""
         if parent_normalized in self._parents and normalize(path) in self._exact:
             return True
         if self.root_names and _is_drive_root(parent_normalized):
@@ -200,7 +200,7 @@ def destination_problem(path: str, protected: ProtectedPaths) -> Optional[str]:
 def path_problem(path: str, protected: ProtectedPaths) -> Optional[str]:
     """Подсказка для пути в списке источников: недоступен или системный."""
     if not os.path.exists(path):
-        return "Путь сейчас недоступен (диск не подключён или путь удалён). Будет пропущен при копировании."
+        return "Путь сейчас недоступен (диск не подключен или путь удален). Будет пропущен при копировании."
     if protected.contains(path):
         return "Системный путь: будет пропущен при копировании."
     return None

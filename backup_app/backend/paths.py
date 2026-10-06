@@ -40,7 +40,7 @@ def default_config_dir() -> str:
 
 
 def config_dir() -> str:
-    """Папка настроек. Создаётся при первом обращении."""
+    """Папка настроек. Создается при первом обращении."""
     directory = os.environ.get(CONFIG_DIR_ENV) or default_config_dir()
     os.makedirs(directory, exist_ok=True)
     return directory

@@ -1,7 +1,7 @@
-"""Главное окно. Только интерфейс: показывает состояние бэкенда и передаёт ему команды.
+"""Главное окно. Только интерфейс: показывает состояние бэкенда и передает ему команды.
 
 Расписание, копирование, проверки и сохранение настроек выполняет BackupService.
-Окно вызывает его методы и получает события через ServiceBridge в своём потоке.
+Окно вызывает его методы и получает события через ServiceBridge в своем потоке.
 
 Поведение в фоне:
 - закрытие и сворачивание окна прячут приложение в трей, если трей доступен;
@@ -251,7 +251,7 @@ class MainWindow(QMainWindow):
 
         self.copy_all_tabs_cb = QCheckBox("Копировать данные всех вкладок")
         self.copy_folder_contents_cb = QCheckBox("Копировать только содержимое папок, без самих папок")
-        self.keep_history_cb = QCheckBox("Добавить дату к имени сохранённой копии файла")
+        self.keep_history_cb = QCheckBox("Добавить дату к имени сохраненной копии файла")
         self.create_backup_folder_cb = QCheckBox(
             'Создавать отдельную папку с названием «Резервное копирование дд-мм-гггг» при каждом копировании')
         self.auto_start_cb = QCheckBox("Автозапуск при входе в систему")
@@ -417,7 +417,7 @@ class MainWindow(QMainWindow):
             self._loading = False
 
     def collect_config(self) -> AppConfig:
-        """Настройки из виджетов. Сервис берёт из них только то, что меняет пользователь."""
+        """Настройки из виджетов. Сервис берет из них только то, что меняет пользователь."""
         return AppConfig(
             period_type=self.period_type_combo.currentText(),
             backup_time=self.time_edit.time().toString("hh:mm"),
@@ -576,7 +576,7 @@ class MainWindow(QMainWindow):
 
     # ============================================================ прогресс
     def show_progress_bar(self) -> None:
-        self.progress_bar.setRange(0, 0)  # «занято», пока бэкенд считает объём
+        self.progress_bar.setRange(0, 0)  # «занято», пока бэкенд считает объем
         self.progress_bar.setVisible(True)
 
     def update_progress(self, percent: int, text: str) -> None:
@@ -622,7 +622,7 @@ class MainWindow(QMainWindow):
             self._tray_hint_shown = True
             self.notify("Приложение работает в фоне",
                         "Копирование по расписанию продолжится. Окно открывается щелчком по иконке в трее.")
-        self.log.info("Окно свёрнуто в трей, приложение продолжает работать")
+        self.log.info("Окно свернуто в трей, приложение продолжает работать")
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)

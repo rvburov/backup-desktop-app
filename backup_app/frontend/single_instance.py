@@ -29,7 +29,7 @@ class SingleInstance(QObject):
             socket.disconnectFromServer()
             return False
 
-        QLocalServer.removeServer(self.key)  # убрать "мёртвый" сокет после сбоя
+        QLocalServer.removeServer(self.key)  # убрать "мертвый" сокет после сбоя
         server = QLocalServer(self)
         server.newConnection.connect(self._on_new_connection)
         if server.listen(self.key):

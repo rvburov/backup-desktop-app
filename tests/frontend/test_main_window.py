@@ -328,7 +328,7 @@ def test_close_hides_to_tray_instead_of_quitting(env, monkeypatch):
     window.close()
     assert window.isHidden() and not window._quitting
     assert quits == []
-    assert "свёрнуто в трей" in env.log_file() and "трей" not in history_text(window)
+    assert "свернуто в трей" in env.log_file() and "трей" not in history_text(window)
     assert env.notifications[-1][1] == "Приложение работает в фоне"
     window.show()
     window.close()
@@ -463,13 +463,13 @@ def test_history_from_previous_runs_is_shown_at_start(env):
     (env.dir / "history.txt").write_text(
         f"{old:%d.%m.%Y %H:%M}  ✓ Старое копирование\n"
         f"{recent:%d.%m.%Y %H:%M}  ⚠ Скопировано 2 файла, ошибок: 1\n"
-        "                    Не скопирован C:/Документы/отчёт.docx: файл занят другой программой\n",
+        "                    Не скопирован C:/Документы/отчет.docx: файл занят другой программой\n",
         encoding="utf-8")
     window = env.window()
     lines = history_text(window).splitlines()
     assert len(lines) == 2
     assert lines[0] == f"{recent:%d.%m.%Y %H:%M}  ⚠ Скопировано 2 файла, ошибок: 1"
-    assert lines[1].strip() == "Не скопирован C:/Документы/отчёт.docx: файл занят другой программой"
+    assert lines[1].strip() == "Не скопирован C:/Документы/отчет.docx: файл занят другой программой"
 
 
 def test_journal_button_opens_log_file(env, monkeypatch):
@@ -497,8 +497,8 @@ def test_journal_button_without_journal_explains(env, monkeypatch):
 def test_app_problem_shows_dialog_or_tray_notification(env):
     window = env.window()
     window.show()
-    window.service._emit(AppProblem("Не удалось сохранить настройки", "диск защищён от записи"))
-    assert env.dialogs[-1] == ("warning", "Не удалось сохранить настройки", "диск защищён от записи")
+    window.service._emit(AppProblem("Не удалось сохранить настройки", "диск защищен от записи"))
+    assert env.dialogs[-1] == ("warning", "Не удалось сохранить настройки", "диск защищен от записи")
     window.show_notifications_cb.setChecked(False)
     window.hide()
     window.service._emit(AppProblem("Не удалось проверить автозапуск", "нет доступа"))

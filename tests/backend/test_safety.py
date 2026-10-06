@@ -71,7 +71,7 @@ def test_symlinks_inside_folder_are_skipped(area):
 
 
 class OldDirEntry:
-    """DirEntry из Python 3.11: метода is_junction у него ещё нет."""
+    """DirEntry из Python 3.11: метода is_junction у него еще нет."""
 
     def __init__(self, entry):
         self._entry = entry

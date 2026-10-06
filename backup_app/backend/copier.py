@@ -2,11 +2,11 @@
 
 Исходные файлы никогда не изменяются, существующие копии никогда не перезаписываются.
 Ошибка одного файла не прерывает копирование: она попадает в журнал и в BackupResult.errors.
-Всё, что пропущено по правилам безопасности, попадает в BackupResult.skipped и в журнал
-с меткой [SECURITY]. Файлы, не скопированные из-за лимита размера или длины пути, ещё и
+Все, что пропущено по правилам безопасности, попадает в BackupResult.skipped и в журнал
+с меткой [SECURITY]. Файлы, не скопированные из-за лимита размера или длины пути, еще и
 в BackupResult.over_limit: это данные пользователя, поэтому их показывает история копирования.
 
-Копирование идёт в два прохода. Первый проход считает объём и записывает пропуски по правилам
+Копирование идет в два прохода. Первый проход считает объем и записывает пропуски по правилам
 безопасности. Второй проход копирует и записывает ошибки.
 """
 import errno
@@ -40,7 +40,7 @@ WalkItem = Tuple[str, str, str, int]  # вид («dir» или «file»), пут
 
 @dataclass
 class BackupJob:
-    """Одно задание: источники одной вкладки и её папка назначения."""
+    """Одно задание: источники одной вкладки и ее папка назначения."""
 
     name: str = ""
     folders: List[str] = field(default_factory=list)
@@ -105,7 +105,7 @@ def free_space(path: str) -> Optional[int]:
 
 
 def folder_copy_name(folder: str) -> str:
-    """Имя папки в копии; для корня диска «C:\\» даёт «Диск_C»."""
+    """Имя папки в копии; для корня диска «C:\\» дает «Диск_C»."""
     name = os.path.basename(os.path.normpath(folder))
     if not name or name.endswith(":"):
         name = "Диск_" + (folder.strip(":\\/") or "root")
@@ -233,7 +233,7 @@ class BackupRunner:
 
     # ------------------------------------------------------------ проход 1
     def _scan(self) -> None:
-        """Считает файлы и объём, записывает пропуски и ненайденные источники."""
+        """Считает файлы и объем, записывает пропуски и ненайденные источники."""
         for job in self.jobs:
             count = size = 0
             for folder in job.folders:
@@ -247,7 +247,7 @@ class BackupRunner:
                     self._skip(text)
                     continue
                 if safety.is_link(folder):
-                    self._note(f"Выбранная папка является ссылкой, копируется её содержимое: {folder}")
+                    self._note(f"Выбранная папка является ссылкой, копируется ее содержимое: {folder}")
                 for kind, _path, _rel, file_size in self._walk(folder, report=True, on_error=self._access_error):
                     if kind == "file":
                         count += 1
@@ -293,7 +293,7 @@ class BackupRunner:
 
     def _walk(self, folder: str, report: bool,
               on_error: Optional[Callable[[str, OSError], None]] = None) -> Iterator[WalkItem]:
-        """Обходит папку по правилам безопасности. Сначала выдаёт папку, затем её файлы."""
+        """Обходит папку по правилам безопасности. Сначала выдает папку, затем ее файлы."""
         prune = [root for root in self._destinations
                  if safety.is_inside(root, folder) and root != safety.normalize(folder)]
         stack = [(folder, "")]
@@ -466,7 +466,7 @@ class BackupRunner:
         self._report_progress()
 
     def _target_path(self, directory: str, name: str) -> Tuple[Optional[str], bool]:
-        """Путь копии с учётом совпадения имён и лимита длины пути."""
+        """Путь копии с учетом совпадения имен и лимита длины пути."""
         keep_history = self.options.keep_history
         path = safe_destination_path(os.path.join(directory, name), keep_history)
         limit = self.policy.max_path_length
