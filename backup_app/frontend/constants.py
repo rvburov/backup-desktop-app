@@ -4,7 +4,6 @@ APP_TITLE = "Резервное копирование файлов"
 SINGLE_INSTANCE_KEY = "BackupApp-single-instance"
 TAB_TITLE_LIMIT = 14
 
-SHORTCUTS_HINT = "Горячие клавиши: Ctrl+B — копировать сейчас, Ctrl+H — свернуть в трей, Ctrl+Q — выход"
 SECURITY_HINT = (
     "При копировании пропускаются ссылки и junction внутри папок, системные папки и файлы, "
     "специальные файлы и файлы больше лимита. Путь копии не длиннее {max_path} символов: "

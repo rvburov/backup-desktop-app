@@ -14,10 +14,10 @@ from datetime import datetime
 from typing import List, Optional
 
 from PyQt5.QtCore import QEvent, QSize, Qt, QTime, QTimer
-from PyQt5.QtGui import QIcon, QKeySequence
+from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (QAction, QApplication, QCheckBox, QComboBox, QFrame, QGridLayout,
                              QGroupBox, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
-                             QProgressBar, QPushButton, QShortcut, QSizePolicy, QSpinBox,
+                             QProgressBar, QPushButton, QSizePolicy, QSpinBox,
                              QStackedWidget, QTabWidget, QTextEdit, QTimeEdit, QToolBar,
                              QVBoxLayout, QWidget)
 
@@ -27,7 +27,7 @@ from ..backend import (ALREADY_RUNNING, MAX_PATH_LENGTH, PERIOD_MONTHLY, PERIOD_
                        BackupStarted, ConfigChanged, RunSkipped, ScheduleChanged, TabConfig,
                        format_run_time, get_logger)
 from .bridge import ServiceBridge
-from .constants import APP_TITLE, SECURITY_HINT, SHORTCUTS_HINT, TAB_TITLE_LIMIT
+from .constants import APP_TITLE, SECURITY_HINT, TAB_TITLE_LIMIT
 from .resources import resource_path
 from .tab_page import TabPage
 from .tray import TrayIcon
@@ -70,7 +70,6 @@ class MainWindow(QMainWindow):
         bridge.log_message.connect(self.log_text.append)
         bridge.event_received.connect(self.on_backend_event)
         self.setup_tray()
-        self.setup_shortcuts()
         self.apply_config(service.config)
         self.render_schedule(service.schedule_active, service.next_run)
         self.render_running(service.is_running)
@@ -235,16 +234,15 @@ class MainWindow(QMainWindow):
         additional_layout = QGridLayout(additional_group)
         additional_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
 
-        self.copy_all_tabs_cb = QCheckBox("Копировать файлы из всех вкладок")
-        self.copy_folder_contents_cb = QCheckBox("Копировать содержимое папки (без самой папки)")
+        self.copy_all_tabs_cb = QCheckBox("Копировать данные всех вкладок")
+        self.copy_folder_contents_cb = QCheckBox("Копировать только содержимое папок, без самих папок")
         self.keep_history_cb = QCheckBox("Добавить дату к имени сохранённой копии файла")
         self.create_backup_folder_cb = QCheckBox(
             'Создавать отдельную папку с названием «Резервное копирование дд-мм-гггг» при каждом копировании')
-        self.auto_start_cb = QCheckBox("Запускать приложение при старте системы (свёрнутым в трей)")
-        self.minimize_to_tray_cb = QCheckBox("Сворачивать в трей вместо закрытия (работа в фоновом режиме)")
-        self.show_notifications_cb = QCheckBox("Показывать уведомления о начале и результате копирования")
-        self.run_missed_cb = QCheckBox(
-            "Выполнять пропущенное копирование при запуске (если компьютер был выключен в назначенное время)")
+        self.auto_start_cb = QCheckBox("Автозапуск при входе в систему")
+        self.minimize_to_tray_cb = QCheckBox("Фоновый режим работы")
+        self.show_notifications_cb = QCheckBox("Уведомления о начале и результате копирования")
+        self.run_missed_cb = QCheckBox("Выполнять пропущенное копирование при следующем запуске")
 
         for row, checkbox in enumerate((
                 self.copy_all_tabs_cb, self.copy_folder_contents_cb, self.keep_history_cb,
@@ -255,7 +253,6 @@ class MainWindow(QMainWindow):
                 checkbox.toggled.connect(self.toggle_auto_start)
             else:
                 checkbox.toggled.connect(self.on_settings_changed)
-        additional_layout.addWidget(self._hint(SHORTCUTS_HINT), 8, 0, 1, 2)
         settings_layout.addWidget(additional_group)
 
         security_group = QGroupBox("Безопасность")
@@ -303,12 +300,6 @@ class MainWindow(QMainWindow):
         status_layout.addWidget(self.status_label)
         status_layout.addWidget(self.progress_bar)
         layout.addWidget(status_widget)
-
-    def setup_shortcuts(self) -> None:
-        for keys, handler in (("Ctrl+B", self.manual_backup), ("Ctrl+H", self.hide_to_tray),
-                              ("Ctrl+Q", self.quit_app), ("Ctrl+1", self.show_files_section),
-                              ("Ctrl+2", self.show_settings_section)):
-            QShortcut(QKeySequence(keys), self).activated.connect(handler)
 
     def show_files_section(self) -> None:
         self.stacked_widget.setCurrentIndex(0)
