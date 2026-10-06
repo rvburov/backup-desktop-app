@@ -1,6 +1,8 @@
 import os
+from types import SimpleNamespace
 
 from backup_app import main as main_module
+from backup_app.frontend import app as app_module
 from backup_app.frontend.app import QtFrontend, instance_key
 from backup_app.frontend.constants import SINGLE_INSTANCE_KEY
 
@@ -29,3 +31,33 @@ def test_frontend_single_instance(qapp):
         assert first.app is qapp
     finally:
         first.release()
+
+
+def fake_ctypes(calls):
+    def set_app_id(app_id):
+        calls.append(app_id)
+        return 0
+
+    return SimpleNamespace(windll=SimpleNamespace(shell32=SimpleNamespace(
+        SetCurrentProcessExplicitAppUserModelID=set_app_id)))
+
+
+def test_script_run_on_windows_gets_own_taskbar_group(monkeypatch):
+    calls = []
+    monkeypatch.setattr(app_module, "ctypes", fake_ctypes(calls))
+    monkeypatch.setattr(app_module.sys, "platform", "win32")
+    monkeypatch.delattr(app_module.sys, "frozen", raising=False)
+    assert app_module.set_windows_app_id() is True
+    assert calls == ["BackupApp"]
+
+
+def test_exe_and_other_systems_keep_default_taskbar_group(monkeypatch):
+    calls = []
+    monkeypatch.setattr(app_module, "ctypes", fake_ctypes(calls))
+    monkeypatch.setattr(app_module.sys, "platform", "win32")
+    monkeypatch.setattr(app_module.sys, "frozen", True, raising=False)
+    assert app_module.set_windows_app_id() is False
+    monkeypatch.setattr(app_module.sys, "frozen", False)
+    monkeypatch.setattr(app_module.sys, "platform", "linux")
+    assert app_module.set_windows_app_id() is False
+    assert calls == []

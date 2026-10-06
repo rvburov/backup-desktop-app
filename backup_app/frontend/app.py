@@ -1,12 +1,14 @@
 """Запуск интерфейса: QApplication, защита от второго экземпляра, окно и трей."""
+import ctypes
 import getpass
 import os
+import sys
 from typing import List, Optional
 
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication
 
-from ..backend import APP_NAME, BackupService, get_logger
+from ..backend import APP_NAME, BackupService, get_logger, paths
 from .bridge import ServiceBridge
 from .constants import SINGLE_INSTANCE_KEY
 from .main_window import MainWindow
@@ -30,8 +32,24 @@ def instance_key() -> str:
     return f"{SINGLE_INSTANCE_KEY}-{user}"
 
 
+def set_windows_app_id() -> bool:
+    """Своя группа на панели задач Windows при запуске через python.
+
+    Без нее Windows считает окно частью python.exe и показывает на панели задач значок Python.
+    Собранному exe идентификатор не нужен: иконку Windows берет из самого файла, а закрепленный
+    ярлык exe и запущенное окно остаются одной кнопкой. Вызывается до создания окон.
+    """
+    if sys.platform != "win32" or paths.is_frozen():
+        return False
+    try:
+        return ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_NAME) == 0
+    except (AttributeError, OSError):
+        return False
+
+
 class QtFrontend:
     def __init__(self, argv: List[str], key: Optional[str] = None):
+        set_windows_app_id()
         app = QApplication.instance() or QApplication(argv)
         app.setStyle("Fusion")
         app.setApplicationName(APP_NAME)
