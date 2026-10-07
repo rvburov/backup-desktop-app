@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (QApplication, QHBoxLayout, QLabel, QLineEdit, QMenu
 from backup_app.frontend import icons, theme
 from backup_app.frontend import widgets as W
 from backup_app.frontend.theme import C
+from helpers import wait_for
 
 
 @pytest.fixture
@@ -256,8 +257,7 @@ def test_toggle_switch(host):
     sw.set_checked_silent(False)
     assert not sw.isChecked() and got == [True] and sw.knob == 0.0
     sw.setChecked(True)
-    QTest.qWait(250)
-    assert sw.knob == pytest.approx(1.0)
+    assert wait_for(QApplication.instance(), lambda: sw.knob == pytest.approx(1.0), timeout=5)
     assert sw.property("kind") == "switch"
 
 
@@ -516,8 +516,9 @@ def test_spinner_and_progress(host):
     pump(host)
     assert spinner.is_spinning() and spinner.size().width() == 15
     angle = spinner.angle
-    QTest.qWait(80)
-    assert spinner.angle != angle
+    # Ждем поворота, а не фиксированные 80 мс: на медленной машине (macOS в CI) QTest.qWait
+    # мог проспать весь срок и ни разу не обработать таймер спиннера.
+    assert wait_for(QApplication.instance(), lambda: spinner.angle != angle, timeout=5)
     spinner.hide()
     assert not spinner.is_spinning()
     assert bar.height() == 6 and not bar.is_indeterminate() and not bar.is_animating()
@@ -649,8 +650,7 @@ def test_toast_anchors_and_hides(host):
     assert toast.geometry().right() == host.width() - 16 - 1
     toast.show_message("Сброс выполнен", "", "info", timeout=30)
     assert toast.text_label.isHidden()
-    QTest.qWait(120)
-    assert toast.isHidden() and len(got) == 1
+    assert wait_for(QApplication.instance(), toast.isHidden, timeout=5) and len(got) == 1
     toast.show_message("x", "y")
     QTest.mouseClick(toast.close_button, Qt.LeftButton)
     assert toast.isHidden() and len(got) == 2

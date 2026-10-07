@@ -8,13 +8,20 @@ on:
   pull_request:
 
 jobs:
+  # В Actions задания называются по системам (Windows, Linux, macOS), а не по меткам машин:
+  # name из include добавляется ко всем сочетаниям матрицы с тем же os.
   test:
+    name: Тесты ${{ matrix.name }}, Python ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
         python-version: ["3.11", "3.12"]
+        include:
+          - { os: windows-latest, name: Windows }
+          - { os: ubuntu-latest,  name: Linux }
+          - { os: macos-latest,   name: macOS }
 
     steps:
       - uses: actions/checkout@v7
@@ -47,11 +54,15 @@ jobs:
   # Скрипты выпуска (scripts/github-release) на трех системах: release.sh запускают
   # на любой из них, а sed, awk и bash там разные.
   release-scripts:
+    name: Скрипты релиза ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        include:
+          - { os: windows-latest, name: Windows }
+          - { os: ubuntu-latest,  name: Linux }
+          - { os: macos-latest,   name: macOS }
 
     steps:
       - uses: actions/checkout@v7

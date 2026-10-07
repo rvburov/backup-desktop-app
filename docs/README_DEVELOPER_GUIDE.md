@@ -642,12 +642,18 @@ def test_tick_runs_backup_when_due(make_service, paths):
 ни один диалог. Модальное окно внутри окна отвечает без цикла событий: `OverlayDialog.preset_answer`
 задает ответ, `OverlayDialog.asked` записывает вопросы.
 
+Таймеры и анимации тесты ждут по условию: `wait_for(app, условие)` из `helpers.py`, а простую
+паузу дает `pump(app, мс)`, который в конце еще раз обрабатывает события. `QTest.qWait` на
+фиксированное время для этого не годится: на медленной машине CI (так было на macOS) он может
+проспать весь срок и ни разу не обработать таймер, и тест падает через раз.
+
 ### CI
 
 - `.github/workflows/tests.yml` при каждом push в ветку и в pull request запускает pyflakes и
   pytest на `windows-latest`, `ubuntu-latest` и `macos-latest` (Python 3.11 и 3.12) с
   `QT_QPA_PLATFORM=offscreen` и `PYTHONUTF8=1`, а также тесты скриптов выпуска на тех же трех
-  системах. На Linux перед запуском ставятся системные библиотеки Qt.
+  системах. На Linux перед запуском ставятся системные библиотеки Qt. Задания в Actions названы
+  по системам: «Тесты Windows, Python 3.11», «Скрипты релиза macOS» и так далее.
 - `.github/workflows/release.yml` запускается тегом `vX.Y.Z`: собирает программу для
   Windows, macOS и Linux и публикует релиз, см. [README_RELEASE.md](README_RELEASE.md).
 

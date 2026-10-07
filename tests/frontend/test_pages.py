@@ -13,6 +13,7 @@ from backup_app.frontend import widgets as W
 from backup_app.frontend.history_panel import HistoryPanel, split_icon
 from backup_app.frontend.tab_page import (TabPage, fmt_when, preview_texts, problem_line, sched_short, tab_name,
                                           tab_problem)
+from helpers import pump
 
 NOW = datetime(2026, 10, 6, 14, 38, 3)  # вторник
 
@@ -161,7 +162,6 @@ def test_history_rows_draw_their_own_entry_after_trim(themed, monkeypatch):
 
 
 def test_history_rows_follow_width_after_resize(themed):
-    from PyQt5.QtTest import QTest
     from backup_app.frontend import history_panel
     panel = HistoryPanel()
     long_text = "✓ " + "очень длинная запись истории " * 8
@@ -169,11 +169,11 @@ def test_history_rows_follow_width_after_resize(themed):
                        HistoryEntry(datetime(2026, 10, 5, 9, 1), long_text)])
     panel.resize(1400, 300)
     panel.show()
-    QTest.qWait(history_panel.RELAYOUT_MS + 80)
+    pump(QCoreApplication.instance(), history_panel.RELAYOUT_MS + 80)
     view = panel.view
     one_line = view.visualRect(view.model_.index(1, 0)).height()
     panel.resize(500, 300)
-    QTest.qWait(history_panel.RELAYOUT_MS + 80)
+    pump(QCoreApplication.instance(), history_panel.RELAYOUT_MS + 80)
     rect = view.visualRect(view.model_.index(1, 0))
     assert rect.height() > one_line            # длинная запись перенеслась
     assert rect.width() == view.viewport().width()
@@ -185,13 +185,12 @@ def test_history_rows_follow_width_after_resize(themed):
 def test_history_rows_have_fractional_pitch_like_the_mockup(themed):
     # однострочная запись в макете 3 + 12.5 × 1.4 + 3 = 23.5 px: края строк — округленные точные края
     # (строки по 23 и 24 px), а не 24 px каждая, иначе нижние строки уезжают от макета
-    from PyQt5.QtTest import QTest
     from backup_app.frontend import history_panel
     panel = HistoryPanel()
     panel.set_entries([HistoryEntry(datetime(2026, 10, 5, 9, i), f"Запись {i}") for i in range(10)])
     panel.resize(1100, 300)
     panel.show()
-    QTest.qWait(history_panel.RELAYOUT_MS + 80)
+    pump(QCoreApplication.instance(), history_panel.RELAYOUT_MS + 80)
     view, width = panel.view, panel.view.viewport().width()
     exact = view.delegate.entry_height(view.model_.entries[0], width)
     assert exact == pytest.approx(23.5, abs=0.01)
