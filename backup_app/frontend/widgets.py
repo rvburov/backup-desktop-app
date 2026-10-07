@@ -22,7 +22,7 @@ from PyQt5.QtWidgets import (QAbstractButton, QAbstractItemView, QApplication, Q
                              QWidget, QWidgetItem)
 
 from . import icons
-from .theme import (BUTTON_HEIGHT, BUTTON_HEIGHT_SMALL, C, exact, faded, font, font_exact, has_keyboard_focus,
+from .theme import (C, CONTROL_HEIGHT, exact, faded, font, font_exact, has_keyboard_focus,
                     keyboard_focus_reason, mix, px_to_pt, set_props)
 
 DAY_SHORT = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
@@ -689,9 +689,7 @@ class Button(QPushButton):
             self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
     def _apply_size(self) -> None:
-        h = BUTTON_HEIGHT_SMALL if self._small else BUTTON_HEIGHT
-        if self._variant == "nav":
-            h = 32  # .tab макета: 7 + 18.2 + 7
+        h = CONTROL_HEIGHT  # одна высота у всех кнопок: small меняет только шрифт и поля
         if self._icon_only:
             self.setFixedSize(h, h)
         else:
@@ -899,7 +897,7 @@ class Segmented(QFrame):
     def __init__(self, options: Sequence[Tuple[str, str]], value: Optional[str] = None, parent=None):
         super().__init__(parent)
         self.setProperty("kind", "segmented")
-        self.setFixedHeight(32)
+        self.setFixedHeight(CONTROL_HEIGHT)
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
@@ -908,7 +906,7 @@ class Segmented(QFrame):
         for key, text in options:
             b = Button(text, elide=True, checkable=True, parent=self)
             b.setProperty("kind", "seg")
-            b.setFixedHeight(28)
+            b.setFixedHeight(CONTROL_HEIGHT - 2 * self.PAD)  # сегмент внутри полей группы
             b.clicked.connect(lambda _=False, k=key: self._pick(k))
             self._group.addButton(b)
             self._buttons[key] = b
@@ -1021,7 +1019,7 @@ class Segmented(QFrame):
 
 
 class DayChips(QWidget):
-    """Дни недели «Пн … Вс»: кнопки 34×28, выбран один день (0 = понедельник). Переносятся, если тесно."""
+    """Дни недели «Пн … Вс»: кнопки 34×32, выбран один день (0 = понедельник). Переносятся, если тесно."""
 
     changed = pyqtSignal(int)
 
@@ -1035,7 +1033,7 @@ class DayChips(QWidget):
             b = QPushButton(text)
             b.setProperty("kind", "chip")
             b.setCheckable(True)
-            b.setFixedSize(34, 28)
+            b.setFixedSize(34, CONTROL_HEIGHT)
             b.setFocusPolicy(Qt.TabFocus)
             b.setCursor(Qt.PointingHandCursor)
             b.setAccessibleName(full_names[index])
@@ -1070,7 +1068,7 @@ class DayChips(QWidget):
 
     def sizeHint(self):  # noqa: N802
         n = len(self._buttons)
-        return QSize(n * 34 + (n - 1) * 4, 28)
+        return QSize(n * 34 + (n - 1) * 4, CONTROL_HEIGHT)
 
 
 class MonthdayStepper(QFrame):
@@ -1082,7 +1080,7 @@ class MonthdayStepper(QFrame):
     def __init__(self, value: int = 1, parent=None):
         super().__init__(parent)
         self.setProperty("kind", "stepper")
-        self.setFixedHeight(30)
+        self.setFixedHeight(CONTROL_HEIGHT)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(1, 1, 1, 1)
         lay.setSpacing(0)
@@ -1090,6 +1088,8 @@ class MonthdayStepper(QFrame):
                                   accessible_name="Раньше на день", icon_size=13)
         self.up_button = Button(variant="stepper", icon="plus", icon_only=True, small=True,
                                 accessible_name="Позже на день", icon_size=13)
+        for button in (self.down_button, self.up_button):
+            button.setFixedSize(CONTROL_HEIGHT - 2, CONTROL_HEIGHT - 2)  # внутри рамки 1px
         self.value_label = QLabel()
         self.value_label.setProperty("kind", "semibold")
         self.value_label.setAlignment(Qt.AlignCenter)
@@ -2461,7 +2461,7 @@ class TitleEdit(QWidget):
         self.line_edit = _TitleLineEdit()
         self.line_edit.setProperty("kind", "title")
         self.line_edit.setAccessibleName("Название вкладки")
-        self.line_edit.setFixedHeight(33)  # 18px × 1.4 + поля 3 + рамка 1
+        self.line_edit.setFixedHeight(CONTROL_HEIGHT)  # как у кнопок: название вровень с кнопками шапки
         if max_length:
             self.line_edit.setMaxLength(max_length)
         self.pencil = IconLabel("pencil", C.FAINT, 15)

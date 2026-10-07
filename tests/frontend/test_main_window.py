@@ -5,8 +5,8 @@ import time
 from datetime import datetime, timedelta
 
 import pytest
-from PyQt5.QtCore import QCoreApplication, QEvent, Qt, QTime
-from PyQt5.QtWidgets import QWidget
+from PyQt5.QtCore import QCoreApplication, QEvent, QPoint, Qt, QTime
+from PyQt5.QtWidgets import QAbstractSpinBox, QLineEdit, QPushButton, QWidget
 
 from backup_app.backend import (NO_DESTINATION, NO_SOURCES, NO_TABS_WITH_DATA, PERIOD_MONTHLY, PERIOD_WEEKLY,
                                 STATUS_OK, STATUS_PARTIAL, AppConfig, AppProblem, BackupFinished, BackupProgress,
@@ -16,6 +16,7 @@ from backup_app.backend import autostart, backup_folder_name
 from backup_app.backend import copier as copier_module
 from backup_app.backend.safety import system_paths
 from backup_app.frontend import constants as K
+from backup_app.frontend import theme
 from backup_app.frontend import main_window as mw
 from backup_app.frontend import widgets as W
 from backup_app.frontend.bridge import ServiceBridge
@@ -656,6 +657,44 @@ def test_no_tooltips_anywhere(env, tree):
     tips = [(type(w).__name__, w.toolTip()) for w in window.findChildren(QWidget) if w.toolTip()]
     assert tips == []
     assert window.tray.toolTip() == ""
+
+
+def test_buttons_and_fields_have_one_height(env, tree):
+    """Все кнопки и поля окна одной высоты, кнопки шапки вровень с названием вкладки.
+
+    Ниже бывают только части составных элементов: сегменты, кнопки −/+ поля числа месяца, крестики сообщений.
+    """
+    src, dst = tree
+    window = env.window(tabs_ini(*[f"Вкладка {i}" for i in range(8)]), show=True)  # с поиском по вкладкам
+    window.resize(1100, 820)  # в узком окне кнопки шапки по задумке переносятся под название
+    fill_tab(window, [src / "docs"], [], dst)
+    window.set_schedule(True)
+    page = window.page
+    seen = {}
+
+    def collect():
+        QCoreApplication.processEvents()
+        for w in window.findChildren(QWidget):
+            if not w.isVisibleTo(window) or isinstance(w.parentWidget(), QAbstractSpinBox):
+                continue
+            if w.property("kind") == "seg" or w.property("variant") in ("stepper", "toast-close", "notice-close"):
+                continue
+            if isinstance(w, (QPushButton, QLineEdit, QAbstractSpinBox, W.Segmented, W.MonthdayStepper)):
+                name = w.text() if isinstance(w, (QPushButton, QLineEdit)) else ""
+                seen[f"{type(w).__name__} {name or w.accessibleName()}"] = w.height()
+
+    collect()
+    title, run, trash = page.title_edit.line_edit, page.run_button, page.delete_button
+    assert len({w.mapTo(page, QPoint(0, 0)).y() for w in (title, run, trash)}) == 1
+    assert title.height() == run.height() == trash.height()
+    for period in (PERIOD_WEEKLY, PERIOD_MONTHLY):
+        page.period.button(period).click()
+        collect()
+    window.sidebar.settings_button.click()
+    collect()
+    assert window.sidebar.search.isVisible()  # поле поиска тоже проверено
+    assert {name: height for name, height in seen.items() if height != theme.CONTROL_HEIGHT} == {}
+    assert len(seen) >= 20, sorted(seen)
 
 
 def test_reset_clears_tab_search(env):

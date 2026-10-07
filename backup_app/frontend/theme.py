@@ -83,11 +83,10 @@ class C:
 DISABLED_OPACITY = 0.45
 
 # Размеры (px) — общие для QSS и виджетов.
-FIELD_HEIGHT = 32
-FIELD_HEIGHT_SMALL = 30        # поле поиска вкладок (в макете height: 30px)
-FIELD_HEIGHT_SEARCH = FIELD_HEIGHT_SMALL
-BUTTON_HEIGHT = 32
-BUTTON_HEIGHT_SMALL = 28
+# Одна высота у всех кнопок и полей ввода. «Маленькие» кнопки и поле поиска отличаются только шрифтом
+# и полями. Ниже бывают лишь части составных элементов: сегменты внутри переключателя периодов (28),
+# кнопки −/+ внутри поля числа месяца (30), крестики закрытия сообщений.
+CONTROL_HEIGHT = 32
 RADIUS_CARD = 8
 RADIUS_FIELD = 6
 BASE_FONT_PX = 13
@@ -370,7 +369,7 @@ QWidget[kind="option"]:hover {{ background: {C.OPT_HOVER}; }}
 
 /* ---------- кнопки ---------- */
 QPushButton, QToolButton {{ {med} {_fs(13)} color: {C.TEXT}; background: {C.CARD}; border: 1px solid {C.INPUT};
-    border-radius: 6px; padding: 0 12px; min-height: {BUTTON_HEIGHT - 2}px; }}
+    border-radius: 6px; padding: 0 12px; min-height: {CONTROL_HEIGHT - 2}px; }}
 QPushButton:hover, QToolButton:hover {{ background: {C.HOVER}; border-color: {C.INPUT_HOVER}; }}
 QPushButton:pressed, QToolButton:pressed {{ background: {C.GHOST_HOVER}; }}
 QPushButton[kbfocus="true"], QToolButton[kbfocus="true"] {{ border-color: {C.ACCENT}; }}
@@ -378,8 +377,7 @@ QPushButton:disabled, QToolButton:disabled {{ color: {dis_text}; background: {C.
 /* кнопка на боковой панели («Копировать все вкладки»): opacity .45 поверх фона панели, а не карточки */
 QPushButton[surface="side"]:disabled {{ color: {faded(C.TEXT, C.SIDE)}; background: {faded(C.CARD, C.SIDE)};
     border-color: {faded(C.INPUT, C.SIDE)}; }}
-QPushButton[small="true"], QToolButton[small="true"] {{ {_fs(12.5)} padding: 0 9px;
-    min-height: {BUTTON_HEIGHT_SMALL - 2}px; }}
+QPushButton[small="true"], QToolButton[small="true"] {{ {_fs(12.5)} padding: 0 9px; }}
 QPushButton[iconOnly="true"], QToolButton[iconOnly="true"] {{ padding: 0; }}
 QPushButton::menu-indicator, QToolButton::menu-indicator {{ image: none; width: 0; }}
 
@@ -422,13 +420,13 @@ QPushButton[variant="notice-close"] {{ background: transparent; border-color: tr
 QPushButton[variant="notice-close"]:hover {{ background: rgba(142, 28, 18, 0.08); }}
 QPushButton[variant="notice-close"][kbfocus="true"] {{ border-color: {C.NOTICE_TEXT}; }}
 QPushButton[variant="stepper"] {{ background: transparent; border: 1px solid transparent; border-radius: 0;
-    color: {C.TEXT2}; padding: 0; }}
+    color: {C.TEXT2}; padding: 0; min-height: {CONTROL_HEIGHT - 4}px; max-height: {CONTROL_HEIGHT - 4}px; }}
 QPushButton[variant="stepper"]:hover {{ background: {C.GHOST_HOVER}; }}
 QPushButton[variant="stepper"][kbfocus="true"] {{ border-color: {C.ACCENT}; }}
 
 /* пункт боковой панели («Настройки»): как строка вкладки */
 QPushButton[variant="nav"] {{ background: transparent; border: 1px solid transparent; border-radius: 6px;
-    text-align: left; padding: 0 9px; min-height: 30px; }}
+    text-align: left; padding: 0 9px; min-height: {CONTROL_HEIGHT - 2}px; }}
 QPushButton[variant="nav"]:hover {{ background: {C.SIDE_HOVER}; }}
 QPushButton[variant="nav"]:checked {{ background: {C.CARD}; border-color: {C.RING}; }}
 QPushButton[variant="nav"][kbfocus="true"] {{ border-color: {C.ACCENT}; }}
@@ -442,7 +440,8 @@ QPushButton[kind="seg"]:hover {{ background: {C.SEG_HOVER}; }}
 QPushButton[kind="seg"]:checked {{ background: transparent; color: {C.TEXT}; }}
 QPushButton[kind="seg"][kbfocus="true"] {{ border-color: {C.ACCENT}; }}
 QPushButton[kind="chip"] {{ {med} {_fs(12)} background: {C.CARD}; border: 1px solid {C.INPUT}; border-radius: 5px;
-    padding: 0; min-height: 26px; max-height: 26px; min-width: 32px; max-width: 32px; color: {C.TEXT2}; }}
+    padding: 0; min-height: {CONTROL_HEIGHT - 2}px; max-height: {CONTROL_HEIGHT - 2}px; min-width: 32px;
+    max-width: 32px; color: {C.TEXT2}; }}
 QPushButton[kind="chip"]:hover {{ border-color: {C.CHIP_HOVER}; }}
 QPushButton[kind="chip"]:checked {{ background: {C.ACCENT}; border-color: {C.ACCENT}; color: {C.WHITE}; }}
 QPushButton[kind="chip"][kbfocus="true"] {{ border-color: {C.ACCENT_HOVER}; }}
@@ -450,7 +449,7 @@ QPushButton[kind="chip"][kbfocus="true"]:checked {{ border-color: #0B2F75; }}
 
 /* ---------- поля ввода ---------- */
 QLineEdit, QAbstractSpinBox {{ {reg} {_fs(13)} background: {C.CARD}; border: 1px solid {C.INPUT};
-    border-radius: 6px; padding: 0 8px; min-height: {FIELD_HEIGHT - 2}px; max-height: {FIELD_HEIGHT - 2}px;
+    border-radius: 6px; padding: 0 8px; min-height: {CONTROL_HEIGHT - 2}px; max-height: {CONTROL_HEIGHT - 2}px;
     color: {C.TEXT};
     selection-background-color: {C.ACCENT}; selection-color: {C.WHITE}; }}
 QLineEdit:focus, QAbstractSpinBox:focus {{ border-color: {C.ACCENT}; }}
@@ -458,10 +457,9 @@ QLineEdit:disabled, QAbstractSpinBox:disabled {{ color: {dis_text}; background: 
     border-color: {dis_border}; }}
 QLineEdit[readOnly="true"] {{ background: {C.READONLY_BG}; }}
 QLineEdit[mono="true"] {{ {mono} {_fs(12)} }}
-QLineEdit[small="true"] {{ {_fs(12.5)} min-height: {FIELD_HEIGHT_SMALL - 2}px;
-    max-height: {FIELD_HEIGHT_SMALL - 2}px; }}
+QLineEdit[small="true"] {{ {_fs(12.5)} }}
 QLineEdit[kind="title"] {{ {semi} {_fs(18)} background: transparent; border: 1px solid transparent;
-    padding: 2px 5px; min-height: 27px; max-height: 32px; }}
+    padding: 2px 5px; min-height: {CONTROL_HEIGHT - 6}px; max-height: {CONTROL_HEIGHT - 6}px; }}
 QLineEdit[kind="title"]:hover {{ background: {C.CARD}; border-color: {C.INPUT}; }}
 QLineEdit[kind="title"]:focus {{ background: {C.CARD}; border-color: {C.ACCENT}; }}
 /* у счетчиков нет стрелок, как у полей макета: значение вводится с клавиатуры, стрелками или колесом */

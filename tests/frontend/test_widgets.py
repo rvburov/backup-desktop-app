@@ -174,7 +174,7 @@ def test_button_variants_sizes_and_elide(host):
         show_in(host, b)
     long.setFixedWidth(120)
     pump(host)
-    assert primary.height() == 32 and small.height() == 28
+    assert primary.height() == small.height() == theme.CONTROL_HEIGHT == 32
     assert icon_only.size().width() == icon_only.size().height() == 32
     assert icon_only.accessibleName() == "Удалить вкладку"
     assert primary.property("variant") == "primary" and primary.icon_name() == "play"
@@ -264,7 +264,7 @@ def test_segmented(host):
     seg = show_in(host, W.Segmented([("daily", "Ежедневно"), ("weekly", "Еженедельно"),
                                      ("monthly", "Ежемесячно")], "daily"))
     got = collect(seg.changed)
-    assert seg.height() == 32 and seg.button("daily").height() == 28
+    assert seg.height() == theme.CONTROL_HEIGHT and seg.button("daily").height() == 28
     QTest.mouseClick(seg.button("weekly"), Qt.LeftButton)
     assert seg.value() == "weekly" and got == ["weekly"]
     QTest.mouseClick(seg.button("weekly"), Qt.LeftButton)
@@ -376,18 +376,19 @@ def test_day_chips(host):
     chips = show_in(host, W.DayChips(0))
     got = collect(chips.changed)
     assert chips.button(0).text() == "Пн" and chips.button(6).text() == "Вс"
-    assert chips.button(3).size().width() == 34 and chips.button(3).size().height() == 28
+    assert chips.button(3).size().width() == 34 and chips.button(3).size().height() == theme.CONTROL_HEIGHT
     QTest.mouseClick(chips.button(3), Qt.LeftButton)
     assert chips.value() == 3 and got == [3]
     assert [chips.button(i).isChecked() for i in range(7)] == [i == 3 for i in range(7)]
     chips.set_value(6)
     assert got == [3] and chips.button(6).isChecked()
     # не помещаются в строку — переносятся (flex-wrap)
-    assert chips.heightForWidth(120) > chips.heightForWidth(400) == 28
+    assert chips.heightForWidth(120) > chips.heightForWidth(400) == theme.CONTROL_HEIGHT
 
 
 def test_monthday_stepper_wraps(host):
     stepper = show_in(host, W.MonthdayStepper(31))
+    assert stepper.height() == theme.CONTROL_HEIGHT and stepper.up_button.height() == theme.CONTROL_HEIGHT - 2
     got = collect(stepper.changed)
     QTest.mouseClick(stepper.up_button, Qt.LeftButton)
     assert stepper.value() == 1 and stepper.value_label.text() == "1"
@@ -460,8 +461,7 @@ def test_label_line_boxes_and_field_heights(host):
     pump(host)
     assert {k: w.height() for k, w in labels.items()} == {"medium": 18, "muted": 17, "h2": 19, "h1": 25, "caps": 15}
     assert theme.line_box(13) == 18 and theme.line_box(12.5) == 18
-    assert search.height() == theme.FIELD_HEIGHT_SMALL == theme.FIELD_HEIGHT_SEARCH == 30
-    assert field.height() == theme.FIELD_HEIGHT == 32
+    assert search.height() == field.height() == theme.CONTROL_HEIGHT == 32
 
 
 # --------------------------------------------------------------------------- карточки и текст
@@ -755,6 +755,7 @@ def test_focus_ring_only_from_keyboard(host):
 
 def test_title_edit(host):
     title = show_in(host, W.TitleEdit("Документы"))
+    assert title.line_edit.height() == theme.CONTROL_HEIGHT
     host.layout().addWidget(QLineEdit())  # есть куда уйти фокусу
     QApplication.setActiveWindow(host)  # с активным окном уход фокуса тоже дает editingFinished
     pump()
@@ -866,8 +867,8 @@ def test_flow_layout_wraps(themed):
     for text in ("Добавить папку", "Добавить файл", "Очистить список"):
         flow.addWidget(W.Button(text, small=True))
     assert flow.count() == 3
-    assert flow.heightForWidth(1000) == 28
-    assert flow.heightForWidth(150) > 28 * 2
+    assert flow.heightForWidth(1000) == theme.CONTROL_HEIGHT
+    assert flow.heightForWidth(150) > theme.CONTROL_HEIGHT * 2
 
 
 def test_style_menu(themed):

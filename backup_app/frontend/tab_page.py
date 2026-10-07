@@ -23,7 +23,7 @@ from . import icons
 from . import widgets as W
 from .constants import (DESTINATION_REFUSED, FILES_REFUSED, FOLDER_REFUSED, NEXT_RUN_OFF_TAB, NEXT_RUN_TEXT,
                         SCHEDULE_OFF_SHORT, TAB_RUNNING_TEXT)
-from .theme import C, font_exact as font
+from .theme import C, CONTROL_HEIGHT, font_exact as font
 
 DAY_DATIVE = ("понедельникам", "вторникам", "средам", "четвергам", "пятницам", "субботам", "воскресеньям")
 # Отметка времени в имени копии при совпадении имен — как COPY_STAMP_FORMAT в copier.
@@ -298,7 +298,7 @@ class TimeField(QTimeEdit):
         self.setDisplayFormat("HH:mm")
         self.setButtonSymbols(QAbstractSpinBox.NoButtons)
         self.setFixedWidth(104)
-        self.setFixedHeight(32)
+        self.setFixedHeight(CONTROL_HEIGHT)
         self.setAccessibleName("Время")
         self.setStyleSheet("QTimeEdit { padding-right: 30px; }")
         self.clock = W.IconLabel("clock", C.TEXT, 13, 2.0, parent=self)
@@ -374,7 +374,8 @@ class TabPage(QWidget):
         self.delete_button.clicked.connect(self.delete_requested)
         buttons.addWidget(self.run_button)
         buttons.addWidget(self.delete_button)
-        row.add(right)
+        # кнопки вровень с названием вкладки (той же высоты), а не по середине блока «название + состояние»
+        row.add(right, align="start")
         return header
 
     def _build_sources_card(self) -> QFrame:
