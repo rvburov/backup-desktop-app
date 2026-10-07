@@ -6,7 +6,8 @@ from datetime import datetime, timedelta
 
 import pytest
 from PyQt5.QtCore import QCoreApplication, QEvent, QPoint, Qt, QTime
-from PyQt5.QtWidgets import QAbstractSpinBox, QLineEdit, QPushButton, QWidget
+from PyQt5.QtWidgets import (QAbstractSpinBox, QCheckBox, QLineEdit, QPushButton, QStyle, QStyleOptionButton,
+                             QWidget)
 
 from backup_app.backend import (NO_DESTINATION, NO_SOURCES, NO_TABS_WITH_DATA, PERIOD_MONTHLY, PERIOD_WEEKLY,
                                 STATUS_OK, STATUS_PARTIAL, AppConfig, AppProblem, BackupFinished, BackupProgress,
@@ -727,6 +728,42 @@ def test_buttons_and_fields_have_one_height(env, tree):
     assert window.sidebar.search.isVisible()  # поле поиска тоже проверено
     assert {name: height for name, height in seen.items() if height != theme.CONTROL_HEIGHT} == {}
     assert len(seen) >= 20, sorted(seen)
+
+
+def test_settings_item_has_no_hover_or_selected_look(env):
+    """«Настройки» — просто пункт: ни наведение, ни нажатие, ни открытая страница не меняют его вид."""
+    from PyQt5.QtTest import QTest
+
+    window = env.window(show=True)
+    window.resize(1100, 760)
+    QCoreApplication.processEvents()
+    button, other = window.sidebar.settings_button, window.sidebar.copy_all_button
+    other_plain = other.grab().toImage()
+    QTest.mouseMove(other, other.rect().center())
+    QCoreApplication.processEvents()
+    assert other.grab().toImage() != other_plain  # наведение в тесте работает: обычная кнопка подсвечена
+    plain = button.grab().toImage()
+    QTest.mouseMove(button, button.rect().center())
+    QCoreApplication.processEvents()
+    assert button.grab().toImage() == plain
+    QTest.mouseClick(button, Qt.LeftButton)
+    QCoreApplication.processEvents()
+    assert window._view == "settings" and not button.isCheckable()
+    assert button.grab().toImage() == plain
+
+
+def test_all_checkboxes_have_one_size(env):
+    """Флажки параметров копирования и фильтра истории одного размера."""
+    window = env.window(show=True)
+    QCoreApplication.processEvents()
+    sizes = {}
+    for box in window.findChildren(QCheckBox):
+        option = QStyleOptionButton()
+        box.initStyleOption(option)
+        rect = box.style().subElementRect(QStyle.SE_CheckBoxIndicator, option, box)
+        sizes[box.accessibleName() or box.text() or box.property("kind")] = (rect.width(), rect.height())
+    assert len(sizes) >= 4, sizes
+    assert set(sizes.values()) == {(15, 15)}, sizes
 
 
 def test_reset_clears_tab_search(env):

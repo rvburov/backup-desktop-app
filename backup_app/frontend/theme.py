@@ -424,11 +424,11 @@ QPushButton[variant="stepper"] {{ background: transparent; border: 1px solid tra
 QPushButton[variant="stepper"]:hover {{ background: {C.GHOST_HOVER}; }}
 QPushButton[variant="stepper"][kbfocus="true"] {{ border-color: {C.ACCENT}; }}
 
-/* пункт боковой панели («Настройки»): как строка вкладки */
-QPushButton[variant="nav"] {{ background: transparent; border: 1px solid transparent; border-radius: 6px;
+/* пункт боковой панели («Настройки»): щелчок просто открывает страницу, вид не меняется ни при наведении,
+   ни при нажатии, ни на открытой странице; рамка есть только у фокуса с клавиатуры */
+QPushButton[variant="nav"], QPushButton[variant="nav"]:hover, QPushButton[variant="nav"]:pressed,
+QPushButton[variant="nav"]:checked {{ background: transparent; border: 1px solid transparent; border-radius: 6px;
     text-align: left; padding: 0 9px; min-height: {CONTROL_HEIGHT - 2}px; }}
-QPushButton[variant="nav"]:hover {{ background: {C.SIDE_HOVER}; }}
-QPushButton[variant="nav"]:checked {{ background: {C.CARD}; border-color: {C.RING}; }}
 QPushButton[variant="nav"][kbfocus="true"] {{ border-color: {C.ACCENT}; }}
 
 /* ---------- переключатель периодов и дни недели ---------- */
@@ -472,7 +472,6 @@ QCheckBox:disabled {{ color: {dis_text}; }}
 QWidget[kind="option"] QCheckBox {{ spacing: 0; }}
 /* фильтр истории: стандартный флажок браузера 13×13 (в макете без размеров) */
 QCheckBox[kind="filter"] {{ {_fs(12.5)} color: {C.TEXT2}; spacing: 0; }}
-QCheckBox[kind="filter"]::indicator {{ width: 13px; height: 13px; }}
 QRadioButton {{ spacing: 8px; background: transparent; }}
 
 /* ---------- полосы прокрутки: тонкие, как в боковой панели макета ---------- */
@@ -613,7 +612,7 @@ def tooltip_blocker() -> ToolTipBlocker:
 class AppStyle(QProxyStyle):
     """Fusion + флажок и стрелки счетчика как в макете (рисуются вектором, без файлов-картинок)."""
 
-    INDICATOR = 15
+    INDICATOR = 15  # размер всех флажков программы; свой размер через ::indicator не задавайте
 
     def __init__(self):
         super().__init__(QStyleFactory.create("Fusion"))

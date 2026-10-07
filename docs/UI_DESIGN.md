@@ -76,13 +76,13 @@
 
 | Свойство | Значения |
 |---|---|
-| `QPushButton[variant]` | нет (обычная), `primary`, `ghost`, `link` (синий текст слева), `danger`, `danger-solid`, `nav` (пункт боковой панели) |
+| `QPushButton[variant]` | нет (обычная), `primary`, `ghost`, `link` (синий текст слева), `danger`, `danger-solid`, `nav` (пункт боковой панели «Настройки»: вид не меняется ни при наведении, ни при нажатии, ни на открытой странице) |
 | `QPushButton[small="true"]`, `[iconOnly="true"]` | шрифт 12.5px и поля 9px при той же высоте / квадратная |
 | `[kbfocus="true"]` | ставит `theme.FocusTracker` сам: фокус пришел с клавиатуры (рамка фокуса). Вручную не задавайте |
 | `QLabel[kind]` | `h1`, `h2`, `h3`, `medium`, `semibold`, `muted`, `muted-sm`, `secondary`, `faint`, `caps`, `count`, `warn`, `danger`, `ok`, `status` (+`tone`), `mono`, `mono-body`, `mono-time`, `badge`, `pill`, `note`, `note-sm`, `empty` |
 | `QFrame[kind]` | `card`, `card-footer`, `divider`, `vdivider`, `side-divider`, `sidebar`, `panel` (белая полоса с линией сверху), `row` (строка списка с линией и подсветкой), `row-plain`, `notice`, `note`, `stepper` |
 | `QLineEdit` | `[readOnly="true"]` — серый фон, `[mono="true"]` — моноширинный 12px, `[small="true"]` — поиск: шрифт 12.5px |
-| `QCheckBox[kind="filter"]` | 12.5px `TEXT2`, флажок 13×13 (фильтр истории); подпись — отдельная надпись, зазор 6px задает раскладка |
+| `QCheckBox[kind="filter"]` | 12.5px `TEXT2` (фильтр истории); подпись — отдельная надпись, зазор 6px задает раскладка |
 | `QPushButton[surface="side"]` | кнопка на боковой панели: недоступная — `opacity .45` поверх `SIDE`, а не `CARD` (`Button(surface="side")`) |
 | `QWidget[kind="page"]` | фон окна (нужен `WA_StyledBackground`) |
 
@@ -121,6 +121,8 @@
   вкладки, дни недели, время и число месяца тоже. Ниже бывают только части составных элементов: сегменты
   переключателя периодов (28), кнопки −/+ внутри поля числа месяца (30), крестики закрытия сообщений.
   Кнопки шапки вкладки стоят вровень с названием: `FlexRow.add(..., align="start")`.
+* Все флажки одного размера 15×15 (`AppStyle.INDICATOR`): параметры копирования и фильтр истории. Свой размер
+  через `::indicator` не задавайте.
 * Рабочая область: поля 16px, между карточками 12px. Боковая панель: сверху 12, снизу 10, список — слева 10,
   справа 6; строка вкладки 48.3px + 2px зазор. Дробные высоты строк макета (вкладка 48.3, источник 46.6)
   делегаты повторяют строками разной целой высоты (`TabDelegate.row_top()`, `SourceDelegate.rows_height()`):

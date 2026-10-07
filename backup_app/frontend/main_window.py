@@ -110,7 +110,7 @@ class Sidebar(QFrame):
         self.copy_all_button = W.Button("Копировать все вкладки", icon="layers", elide=True, surface="side")
         foot.addWidget(self.copy_all_button)
         foot.addSpacing(6)
-        self.settings_button = W.Button("Настройки", "nav", icon="gear", icon_size=16, elide=True, checkable=True)
+        self.settings_button = W.Button("Настройки", "nav", icon="gear", icon_size=16, elide=True)
         foot.addWidget(self.settings_button)
         root.addLayout(foot)
         self.search_box.hide()
@@ -461,7 +461,6 @@ class MainWindow(QMainWindow):
     def _show_view(self, view: str) -> None:
         self._view = view
         self.stack.setCurrentIndex(0 if view == "tab" else 1)
-        self.sidebar.settings_button.setChecked(view == "settings")
         if view == "settings":
             self.tab_list.set_current(None)
             self.page.hide_notice()

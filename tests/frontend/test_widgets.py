@@ -5,7 +5,8 @@ import pytest
 from PyQt5.QtCore import QEvent, QObject, QPoint, Qt, QTimer, qInstallMessageHandler
 from PyQt5.QtGui import QColor, QFont, QIcon
 from PyQt5.QtTest import QTest
-from PyQt5.QtWidgets import QApplication, QHBoxLayout, QLabel, QLineEdit, QMenu, QStackedWidget, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import (QApplication, QHBoxLayout, QLabel, QLineEdit, QMenu, QStackedWidget, QStyle,
+                             QStyleOptionButton, QVBoxLayout, QWidget)
 
 from backup_app.frontend import icons, theme
 from backup_app.frontend import widgets as W
@@ -814,6 +815,14 @@ def test_title_edit_width_and_focus_halo(host):
     assert not halo.isVisible()
 
 
+def indicator_size(checkbox):
+    """Размер квадрата флажка, как его рисует стиль (с учетом QSS ::indicator)."""
+    option = QStyleOptionButton()
+    checkbox.initStyleOption(option)
+    rect = checkbox.style().subElementRect(QStyle.SE_CheckBoxIndicator, option, checkbox)
+    return rect.width(), rect.height()
+
+
 def test_textless_checkboxes_leave_gap_to_layout(host):
     from backup_app.frontend.history_panel import FilterCheck
     option = show_in(host, W.OptionCheck("Копировать только содержимое папок", "подсказка"))
@@ -822,7 +831,8 @@ def test_textless_checkboxes_leave_gap_to_layout(host):
     pump()
     assert option.checkbox.width() == 15                            # без места под текст флажка
     assert option.text_label.x() == option.checkbox.geometry().right() + 1 + 9
-    assert check.checkbox.width() == 13 and check.checkbox.height() == 13   # флажок браузера 13×13
+    assert check.checkbox.width() == check.checkbox.height() == 15
+    assert indicator_size(check.checkbox) == indicator_size(option.checkbox) == (15, 15)  # все флажки одного размера
     assert check.text_label.x() == check.checkbox.geometry().right() + 1 + 6
 
 
