@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple
 
 from . import safety
-from .constants import BACKUP_FOLDER_PREFIX
+from .constants import BACKUP_FOLDER_DATE_FORMAT, BACKUP_FOLDER_PREFIX, COPY_STAMP_FORMAT
 from .logger import get_logger
 from .wording import count_files, count_tabs_genitive
 
@@ -39,23 +39,27 @@ WalkItem = Tuple[str, str, str, int]  # вид («dir» или «file»), пут
 
 
 @dataclass
+class BackupOptions:
+    copy_folder_contents: bool = False
+    keep_history: bool = True
+    create_backup_folder: bool = True
+
+
+@dataclass
 class BackupJob:
-    """Одно задание: источники одной вкладки и ее папка назначения."""
+    """Одно задание: источники одной вкладки, ее папка назначения и ее параметры копирования.
+
+    Если options не заданы, действуют общие параметры копирования (BackupRunner.options).
+    """
 
     name: str = ""
     folders: List[str] = field(default_factory=list)
     files: List[str] = field(default_factory=list)
     destination: str = ""
+    options: Optional[BackupOptions] = None
 
     def has_sources(self) -> bool:
         return bool(self.folders or self.files)
-
-
-@dataclass
-class BackupOptions:
-    copy_folder_contents: bool = False
-    keep_history: bool = True
-    create_backup_folder: bool = True
 
 
 @dataclass
@@ -78,13 +82,18 @@ class BackupResult:
         return self.status == STATUS_CANCELLED
 
 
+def backup_folder_name(moment: Optional[datetime] = None) -> str:
+    """Имя папки копии за день: «Резервное копирование дд-мм-гггг»."""
+    return f"{BACKUP_FOLDER_PREFIX} {(moment or datetime.now()).strftime(BACKUP_FOLDER_DATE_FORMAT)}"
+
+
 def safe_destination_path(path: str, keep_history: bool) -> str:
     """Возвращает имя, по которому ничего не будет перезаписано."""
     if not os.path.exists(path):
         return path
     name, ext = os.path.splitext(path)
     if keep_history:
-        stamped = f"{name}_{datetime.now().strftime('%d.%m.%Y_%H-%M-%S')}{ext}"
+        stamped = f"{name}_{datetime.now().strftime(COPY_STAMP_FORMAT)}{ext}"
         if not os.path.exists(stamped):
             return stamped
         name, ext = os.path.splitext(stamped)
@@ -156,11 +165,11 @@ class BackupRunner:
 
     PROGRESS_INTERVAL = 0.1
 
-    def __init__(self, jobs: Iterable[BackupJob], options: BackupOptions,
+    def __init__(self, jobs: Iterable[BackupJob], options: Optional[BackupOptions] = None,
                  policy: Optional[safety.SafetyPolicy] = None,
                  on_progress: Optional[ProgressCallback] = None):
         self.jobs = list(jobs)
-        self.options = options
+        self.options = options or BackupOptions()
         self.policy = policy if policy is not None else safety.SafetyPolicy.default()
         self.on_progress = on_progress
         self.result = BackupResult()
@@ -178,6 +187,10 @@ class BackupRunner:
 
     def cancel(self) -> None:
         self._cancel.set()
+
+    def options_for(self, job: BackupJob) -> BackupOptions:
+        """Параметры копирования задания: свои, если заданы, иначе общие."""
+        return job.options or self.options
 
     @property
     def cancelled(self) -> bool:
@@ -384,9 +397,10 @@ class BackupRunner:
                         f"для вкладки '{job.name}' (нужно {size / MB:.1f} MB)")
             return
 
+        options = self.options_for(job)
         destination = job.destination
-        if self.options.create_backup_folder:
-            destination = os.path.join(destination, f"{BACKUP_FOLDER_PREFIX} {datetime.now().strftime('%d-%m-%Y')}")
+        if options.create_backup_folder:
+            destination = os.path.join(destination, backup_folder_name())
             try:
                 os.makedirs(destination, exist_ok=True)
             except OSError as error:
@@ -398,20 +412,20 @@ class BackupRunner:
                 return
             state, _text = self._folder_state(folder, job)
             if state == "ok":
-                self._copy_folder(folder, destination, job.destination)
+                self._copy_folder(folder, destination, job.destination, options)
         for path in job.files:
             if self.cancelled:
                 return
             state, _text, file_size = self._file_state(path)
             if state == "ok":
-                self._copy_file(path, destination, file_size, job.destination)
+                self._copy_file(path, destination, file_size, job.destination, options.keep_history)
 
-    def _copy_folder(self, folder: str, destination: str, destination_root: str) -> None:
-        if self.options.copy_folder_contents:
+    def _copy_folder(self, folder: str, destination: str, destination_root: str, options: BackupOptions) -> None:
+        if options.copy_folder_contents:
             base = destination
         else:
             base = safe_destination_path(os.path.join(destination, folder_copy_name(folder)),
-                                         self.options.keep_history)
+                                         options.keep_history)
         for kind, path, relative, size in self._walk(folder, report=False, on_error=self._access_error):
             if self.cancelled:
                 return
@@ -422,7 +436,7 @@ class BackupRunner:
             if kind == "dir":
                 self._make_dir(target_dir, path)
             else:
-                self._copy_file(path, target_dir, size, destination_root)
+                self._copy_file(path, target_dir, size, destination_root, options.keep_history)
 
     def _make_dir(self, target_dir: str, source_dir: str) -> None:
         if self._is_blocked(target_dir):
@@ -441,11 +455,12 @@ class BackupRunner:
     def _is_blocked(self, path: str) -> bool:
         return any(path == blocked or path.startswith(blocked + os.sep) for blocked in self._blocked_dirs)
 
-    def _copy_file(self, source: str, target_dir: str, size: int, destination_root: str) -> None:
+    def _copy_file(self, source: str, target_dir: str, size: int, destination_root: str,
+                   keep_history: bool) -> None:
         if self._is_blocked(target_dir):
             self._skip(f"Файл в пропущенной папке: {source}", log=False)
             return
-        target, shortened = self._target_path(target_dir, os.path.basename(source))
+        target, shortened = self._target_path(target_dir, os.path.basename(source), keep_history)
         if target is None:
             self._skip(f"Путь копии длиннее {self.policy.max_path_length} символов, файл пропущен: {source}",
                        over_limit=True)
@@ -465,9 +480,8 @@ class BackupRunner:
         self.result.copied_count += 1
         self._report_progress()
 
-    def _target_path(self, directory: str, name: str) -> Tuple[Optional[str], bool]:
+    def _target_path(self, directory: str, name: str, keep_history: bool) -> Tuple[Optional[str], bool]:
         """Путь копии с учетом совпадения имен и лимита длины пути."""
-        keep_history = self.options.keep_history
         path = safe_destination_path(os.path.join(directory, name), keep_history)
         limit = self.policy.max_path_length
         if not limit or len(path) <= limit:

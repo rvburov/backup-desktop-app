@@ -9,6 +9,7 @@ from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication
 
 from ..backend import APP_NAME, BackupService, get_logger, paths
+from . import theme
 from .bridge import ServiceBridge
 from .constants import SINGLE_INSTANCE_KEY
 from .main_window import MainWindow
@@ -50,13 +51,16 @@ def set_windows_app_id() -> bool:
 class QtFrontend:
     def __init__(self, argv: List[str], key: Optional[str] = None):
         set_windows_app_id()
+        theme.enable_hidpi()  # действует только до создания QApplication
         app = QApplication.instance() or QApplication(argv)
-        app.setStyle("Fusion")
         app.setApplicationName(APP_NAME)
         app.setQuitOnLastWindowClosed(False)
         icon_path = resource_path("icon.ico")
         if os.path.exists(icon_path):
             app.setWindowIcon(QIcon(icon_path))
+        # Стиль Fusion, шрифты из fonts/ (или системные, если не загрузились), светлая палитра и QSS.
+        if not theme.apply(app):
+            get_logger().info("Шрифты интерфейса не загружены, используется системный шрифт")
         self.app = app
         self.instance = SingleInstance(key or instance_key())
         self.window: Optional[MainWindow] = None

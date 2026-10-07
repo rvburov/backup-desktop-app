@@ -9,8 +9,8 @@ import pytest
 from backup_app.backend import copier as copier_module
 from backup_app.backend.constants import BACKUP_FOLDER_PREFIX
 from backup_app.backend.copier import (STATUS_CANCELLED, STATUS_FAILED, STATUS_OK, STATUS_PARTIAL,
-                                       BackupJob, BackupOptions, BackupRunner, describe_error,
-                                       folder_copy_name, safe_destination_path)
+                                       BackupJob, BackupOptions, BackupRunner, backup_folder_name,
+                                       describe_error, folder_copy_name, safe_destination_path)
 from backup_app.backend.safety import SafetyPolicy
 from helpers import list_rel, make_tree
 
@@ -172,6 +172,38 @@ def test_multiple_jobs_use_their_own_destinations(tmp_path):
     assert list_rel(d1) == ["x.txt"] and list_rel(d2) == ["s2/y.txt"]
     assert result.message == "Успешно скопировано 2 файла из 2 вкладок"
     assert any("Копирование вкладки 'T2'" in line for line in lines)
+
+
+def test_each_job_uses_its_own_options(tmp_path):
+    s1, s2, d1, d2 = (tmp_path / name for name in ("s1", "s2", "d1", "d2"))
+    make_tree(s1, {"x.txt": "1", "sub": {"y.txt": "2"}})
+    make_tree(s2, {"z.txt": "3"})
+    d1.mkdir()
+    d2.mkdir()
+    (d1 / "x.txt").write_text("старая копия")
+    jobs = [
+        BackupJob("Содержимое", [str(s1)], [], str(d1),
+                  BackupOptions(copy_folder_contents=True, keep_history=False, create_backup_folder=False)),
+        BackupJob("Папка дня", [str(s2)], [], str(d2)),  # без своих параметров: общие параметры runner
+    ]
+    _lines, result = run(jobs, BackupOptions(copy_folder_contents=False, keep_history=True, create_backup_folder=True))
+    assert result.status == STATUS_OK
+    assert list_rel(d1) == ["sub/y.txt", "x.txt", "x_(1).txt"]
+    assert list_rel(d2) == [f"{daily_folder()}/s2/z.txt"]
+
+
+def test_job_options_fall_back_to_runner_options():
+    job = BackupJob("x")
+    runner = BackupRunner([job], BackupOptions(True, False, False))
+    assert runner.options_for(job) == BackupOptions(True, False, False)
+    own = BackupOptions(False, True, True)
+    assert runner.options_for(BackupJob("y", options=own)) is own
+    assert BackupRunner([job]).options == BackupOptions()
+
+
+def test_backup_folder_name():
+    assert backup_folder_name(datetime(2026, 10, 6, 23, 59)) == f"{BACKUP_FOLDER_PREFIX} 06-10-2026"
+    assert backup_folder_name() == daily_folder()
 
 
 def test_job_without_destination_is_an_error(tree):

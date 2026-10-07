@@ -20,8 +20,13 @@ VERSION = match.group(1)
 
 datas = [
     ("icon.ico", "."),
-    ("icons/files_icon.png", "icons"),
-    ("icons/settings_icon.png", "icons"),
+    # шрифты интерфейса (frontend/theme.py загружает их из папки fonts) и их лицензии SIL OFL 1.1
+    ("fonts/GolosText-Regular.ttf", "fonts"),
+    ("fonts/GolosText-Medium.ttf", "fonts"),
+    ("fonts/GolosText-SemiBold.ttf", "fonts"),
+    ("fonts/JetBrainsMono-Regular.ttf", "fonts"),
+    ("fonts/OFL-GolosText.txt", "fonts"),
+    ("fonts/OFL-JetBrainsMono.txt", "fonts"),
 ]
 
 a = Analysis(

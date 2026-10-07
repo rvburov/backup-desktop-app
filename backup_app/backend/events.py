@@ -15,6 +15,7 @@ from .settings_store import AppConfig
 class BackupStarted:
     scheduled: bool
     tab_names: Tuple[str, ...]
+    tab_ids: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class BackupProgress:
 class BackupFinished:
     result: BackupResult
     scheduled: bool
+    tab_ids: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -39,8 +41,28 @@ class RunSkipped:
 
 @dataclass(frozen=True)
 class ScheduleChanged:
-    active: bool
-    next_run: Optional[datetime]
+    """Расписание вкладок изменилось: (идентификатор вкладки, следующее копирование) каждой
+    вкладки с включенным расписанием, в порядке вкладок."""
+
+    next_runs: Tuple[Tuple[str, datetime], ...] = ()
+
+    @property
+    def active(self) -> bool:
+        """Расписание включено хотя бы у одной вкладки."""
+        return bool(self.next_runs)
+
+    @property
+    def nearest(self) -> Optional[Tuple[str, datetime]]:
+        """Ближайшее копирование по расписанию: (идентификатор вкладки, время) или None."""
+        if not self.next_runs:
+            return None
+        return min(self.next_runs, key=lambda item: item[1])
+
+    @property
+    def next_run(self) -> Optional[datetime]:
+        """Время ближайшего копирования по расписанию или None."""
+        nearest = self.nearest
+        return nearest[1] if nearest else None
 
 
 @dataclass(frozen=True)
