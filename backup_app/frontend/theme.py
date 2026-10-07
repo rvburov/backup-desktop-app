@@ -70,7 +70,7 @@ class C:
     SCROLL = "#AEB7C3"         # ползунок полосы прокрутки
     SCROLL_HOVER = "#8E99A7"
     SPLIT_GRIP = "#B9C1CC"     # «таблетка» на разделителе панелей
-    TOAST_BG = "#1F2733"       # тост и подсказки
+    TOAST_BG = "#1F2733"       # тост
     TOAST_TEXT = "#D5DBE4"
     TOAST_INFO = "#7FB0FF"
     TOAST_WARN = "#F4B740"
