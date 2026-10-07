@@ -1,6 +1,6 @@
 # Backup Application
 
-![Version](https://img.shields.io/badge/version-9.0.0-blue.svg)
+![Version](https://img.shields.io/badge/version-9.1.0-blue.svg)
 [![Tests](https://github.com/rvburov/backup-desktop-app/actions/workflows/tests.yml/badge.svg)](https://github.com/rvburov/backup-desktop-app/actions/workflows/tests.yml)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)

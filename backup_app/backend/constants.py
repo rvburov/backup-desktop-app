@@ -1,7 +1,7 @@
 """Общие константы бэкенда."""
 
 APP_NAME = "BackupApp"
-VERSION = "9.0.0"
+VERSION = "9.1.0"
 
 DEFAULT_TAB_TITLE = "Без названия"
 BACKUP_FOLDER_PREFIX = "Резервное копирование"
