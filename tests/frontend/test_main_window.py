@@ -695,8 +695,7 @@ def test_missing_paths_are_shown_not_dropped(env, tmp_path):
     window = env.window(ini)
     page = window.page
     assert page.to_config().folders == [missing]
-    assert "недоступен" in page.source_tooltips()[0]
-    assert page.source_list.rows()[0][2]
+    assert page.source_list.rows()[0][2]  # путь помечен недоступным
     assert page.summary_label.text() == "1 папка · недоступно: 1"
     assert env.stored().tabs[0].folders == [missing]
 

@@ -215,19 +215,6 @@ class SourceDelegate(QStyledItemDelegate):
                 return True
         return super().editorEvent(event, model, option, index)
 
-    def helpEvent(self, event, view, option, index):  # noqa: N802
-        if event.type() == QEvent.ToolTip:
-            text = ""
-            if index.isValid():
-                path = index.data(ROLE_PATH) or ""
-                problem = index.data(ROLE_PROBLEM) or ""
-                if self.button_rect(option.rect).contains(event.pos()):
-                    text = "Убрать из списка"
-                else:
-                    text = f"{path}\n{problem}" if problem else path
-            return W.show_row_tooltip(event, view, option.rect, text)
-        return super().helpEvent(event, view, option, index)
-
 
 class SourceList(QListView):
     """Папки и файлы вкладки: строки с линией сверху, высота по содержимому, не больше 188 px."""
@@ -272,11 +259,6 @@ class SourceList(QListView):
     def rows(self) -> List[Tuple[str, str, str]]:
         return [(self.model_.item(r).data(ROLE_KIND), self.model_.item(r).data(ROLE_PATH),
                  self.model_.item(r).data(ROLE_PROBLEM) or "") for r in range(self.model_.rowCount())]
-
-    def tooltip(self, row: int) -> str:
-        item = self.model_.item(row)
-        problem = item.data(ROLE_PROBLEM)
-        return f"{item.data(ROLE_PATH)}\n{problem}" if problem else item.data(ROLE_PATH)
 
     def mouseMoveEvent(self, event):  # noqa: N802
         index = self.indexAt(event.pos())
@@ -833,8 +815,3 @@ class TabPage(QWidget):
         self.tab.destination = path
         self._emit_changed()
         return True
-
-    def source_tooltips(self) -> List[str]:
-        return [self.source_list.tooltip(row) for row in range(self.source_list.model_.rowCount())]
-
-
