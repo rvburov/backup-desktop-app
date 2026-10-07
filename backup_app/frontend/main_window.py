@@ -31,7 +31,8 @@ from ..backend import (ALREADY_RUNNING, STATUS_CANCELLED, STATUS_OK, STATUS_PART
 from . import icons
 from . import widgets as W
 from .bridge import ServiceBridge
-from .constants import (ALREADY_RUNNING_TITLE, APP_TITLE, CANCELLING_TEXT, DELETE_CANCEL, DELETE_OK, DELETE_TEXT,
+from .constants import (ALREADY_RUNNING_TITLE, APP_TITLE, CANCELLING_TEXT, COPY_ALL_CANCEL, COPY_ALL_OK,
+                        COPY_ALL_TEXT, COPY_ALL_TITLE, DELETE_CANCEL, DELETE_OK, DELETE_TEXT,
                         DELETE_TITLE, HISTORY_COLLAPSE, HISTORY_EMPTY_TEXT, HISTORY_EXPAND, HISTORY_VIEW_LIMIT,
                         JOURNAL_EMPTY_TEXT, JOURNAL_OPEN_FAILED_TITLE, JOURNAL_TITLE, NEXT_RUN_PILL,
                         NEXT_RUN_STOPPED, NO_DATA_TEXT, PREPARING_TEXT, RESET_CANCEL, RESET_DONE_TEXT,
@@ -313,7 +314,7 @@ class MainWindow(QMainWindow):
         self.tab_list.tab_selected.connect(self.select_tab)
         self.sidebar.search.textChanged.connect(self._on_search)
         self.sidebar.add_button.clicked.connect(self.add_new_tab)
-        self.sidebar.copy_all_button.clicked.connect(self.copy_all_tabs)
+        self.sidebar.copy_all_button.clicked.connect(self.ask_copy_all_tabs)
         self.sidebar.settings_button.clicked.connect(self.show_settings_section)
 
         self.page.changed.connect(self._on_tab_changed)
@@ -582,8 +583,27 @@ class MainWindow(QMainWindow):
         return self._run([self._current_uid])
 
     def copy_all_tabs(self) -> List[str]:
-        """«Копировать все вкладки» (боковая панель и меню трея)."""
+        """Копирование всех вкладок с данными без вопроса (кнопка и меню трея спрашивают в ask_copy_all_tabs)."""
         return self._run(None)
+
+    def ask_copy_all_tabs(self) -> Optional[List[str]]:
+        """«Копировать все вкладки» (боковая панель и меню трея): сначала вопрос в окне.
+
+        Случайный щелчок не запускает копирование всех вкладок. Если копировать нечего или копирование
+        уже идет, вопроса нет: сразу объясняется, почему копирование не запущено. Из трея окно сначала
+        открывается. None — пользователь отказался, иначе ответ copy_all_tabs().
+        """
+        self._flush_title()
+        tabs = self._config.tabs
+        ready = [tab for tab in tabs if not tab.problems()]
+        if ready and not self._running:
+            if not self.isVisible() or self.isMinimized():
+                self.show_from_tray()
+            text = COPY_ALL_TEXT.format(ready=len(ready), total=len(tabs))
+            if not W.confirm(self.centralWidget(), COPY_ALL_TITLE, text, COPY_ALL_OK, COPY_ALL_CANCEL,
+                             ok_variant="primary"):
+                return None
+        return self.copy_all_tabs()
 
     def _run(self, tab_ids) -> List[str]:
         self._flush_title()
@@ -829,7 +849,7 @@ class MainWindow(QMainWindow):
             return
         self.tray = TrayIcon(self.windowIcon(), self)
         self.tray.show_requested.connect(self.show_from_tray)
-        self.tray.backup_requested.connect(self.copy_all_tabs)
+        self.tray.backup_requested.connect(self.ask_copy_all_tabs)
         self.tray.quit_requested.connect(self.quit_app)
         self.tray.show()
 

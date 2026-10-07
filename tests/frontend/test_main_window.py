@@ -307,6 +307,7 @@ def test_copy_all_tabs_runs_every_tab_with_data(env, tmp_path, monkeypatch):
     window.add_new_tab()  # пустая вкладка молча пропускается
     started = datetime.now()
     window.sidebar.copy_all_button.click()
+    assert env.asked()[-1] == (K.COPY_ALL_TITLE, K.COPY_ALL_TEXT.format(ready=2, total=3))
     assert window.status_bar.run_label.text() == K.PREPARING_TEXT
     assert wait_backup(env, window)
     assert "Ручное копирование: Первая, Вторая" in history_text(window)
@@ -320,6 +321,27 @@ def test_copy_all_tabs_without_data_explains(env):
     window = env.window(show=True)
     assert window.copy_all_tabs() == [NO_TABS_WITH_DATA]
     assert env.toasts[-1] == ("warn", "Ошибка", f"{K.NO_DATA_TEXT} {NO_TABS_WITH_DATA}")
+    window.sidebar.copy_all_button.click()  # копировать нечего: вопроса нет, сразу объяснение
+    assert env.asked() == [] and len(env.toasts) == 2
+
+
+def test_copy_all_tabs_asks_first_and_copy_now_does_not(env, tree, monkeypatch):
+    src, dst = tree
+    window = env.window(show=True)
+    window.page.rename("Документы")
+    fill_tab(window, [src / "docs"], [], dst)
+    first = window.current_uid()
+    window.add_new_tab()  # пустая вкладка не копируется и в вопросе не считается
+    monkeypatch.setattr(W.OverlayDialog, "preset_answer", False)
+    window.sidebar.copy_all_button.click()
+    assert env.asked() == [(K.COPY_ALL_TITLE, K.COPY_ALL_TEXT.format(ready=1, total=2))]
+    assert not window._running and not window.service.is_running
+    assert "Ручное копирование" not in history_text(window)
+    window.select_tab(first)
+    window.page.run_button.click()  # «Копировать сейчас» — без вопроса
+    assert len(env.asked()) == 1 and window._running
+    assert wait_backup(env, window)
+    assert "Ручное копирование: Документы" in history_text(window)
 
 
 # --------------------------------------------------------------- расписание
@@ -529,6 +551,16 @@ def test_tray_menu_texts_and_copy_all(env, tree):
     assert wait_backup(env, window)
     assert tray.backup_action.isEnabled()
     assert "Ручное копирование: Документы" in history_text(window)
+
+
+def test_tray_copy_all_opens_window_and_asks(env, tree):
+    src, dst = tree
+    window = env.window()
+    fill_tab(window, [src / "docs"], [], dst)
+    window.hide()
+    window.tray.backup_action.trigger()
+    assert window.isVisible() and env.asked()[-1][0] == K.COPY_ALL_TITLE
+    assert wait_backup(env, window)
 
 
 def test_tray_copy_all_refusal_goes_to_tray_when_hidden(env):
