@@ -126,6 +126,8 @@ WORK="$SANDBOX/work"
 HIST="$WORK/scripts/github-release/release-history.md"
 
 # Свежая копия проекта: только файлы, которые читает и меняет release.sh, плюс «GitHub».
+# «Не выпущено» в копии всегда пустая: тесты не зависят от записей, которые уже сделаны в настоящей
+# истории релизов, а нужные записи добавляют сами (add_unreleased).
 new_sandbox() {
   rm -rf "$ORIGIN" "$WORK"
   git init --quiet --bare -b master "$ORIGIN"
@@ -138,7 +140,13 @@ new_sandbox() {
     mkdir -p backup_app/backend scripts/github-release
     cp "$ROOT/backup_app/backend/constants.py" backup_app/backend/
     cp "$ROOT/README.md" .
-    cp "$HERE"/*.sh "$HERE/release-history.md" scripts/github-release/
+    cp "$HERE"/*.sh scripts/github-release/
+    awk '
+      { line = $0; cr = ""; if (sub(/\r$/, "", line)) cr = "\r" }
+      index(line, "## [Не выпущено]") == 1 { print; print cr; skip = 1; next }
+      skip && line ~ /^## \[/                { skip = 0 }
+      !skip                                  { print }
+    ' "$HERE/release-history.md" > scripts/github-release/release-history.md
     git add -A 2>/dev/null
     git commit --quiet -m "Начальное состояние"
     git remote add origin "$ORIGIN"
@@ -231,9 +239,9 @@ else
   bad "10. Повторный выпуск $NEXT не остановлен" "$out"
 fi
 
-# ── 11. Первый выпуск текущей версии: секция уже заведена ─────────────────────
-# Так выходит версия, записанная в коде до появления скриптов выпуска: VERSION не меняется,
-# в заголовок секции ставится дата.
+# ── 11. Выпуск версии, которая уже записана в коде: секция уже заведена ───────
+# Так версию выпускают заново после отмены релиза: VERSION не меняется, в заголовок секции
+# ставится дата.
 new_sandbox
 out="$(release y "$VER" --skip-tests)"
 code=$?
@@ -262,10 +270,49 @@ printf '%s\n' "$out" | grep "релизы выпускаются из master" > 
 [ -z "$prob12" ] && ok "12. Неотправленный коммит, грязное дерево и чужая ветка останавливают выпуск" \
                  || bad "12. Предусловия" "$prob12"
 
-# ── 13. Настоящий репозиторий не тронут ───────────────────────────────────────
+# ── 13. Push master отклонен: совет из сообщения доводит выпуск до конца ──────
+# «Кто-то опередил»: перед отправкой master хук pre-push кладет в «GitHub» чужой коммит, и push
+# коммита выпуска отклоняется. Совет release.sh выполняется как есть: тег должен оказаться на
+# коммите выпуска, который лежит в master на «GitHub».
+new_sandbox
+add_unreleased "- Запись для проверки отклоненного push."
+OTHER="$SANDBOX/other"
+rm -rf "$OTHER" "$SANDBOX/raced"
+git clone --quiet "$ORIGIN" "$OTHER" 2>/dev/null
+git -C "$OTHER" config user.name "other"
+git -C "$OTHER" config user.email "other@example.invalid"
+cat > "$WORK/.git/hooks/pre-push" <<EOF
+#!/bin/bash
+cat > /dev/null
+[ -e "$SANDBOX/raced" ] && exit 0
+touch "$SANDBOX/raced"
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
+git -C "$OTHER" commit --quiet --allow-empty -m "Чужой коммит" && git -C "$OTHER" push --quiet origin master
+exit 0
+EOF
+chmod +x "$WORK/.git/hooks/pre-push"
+out="$(release y "$NEXT" --skip-tests)"
+advice="$(printf '%s\n' "$out" | grep -F 'git pull --rebase' | sed 's/^ *//')"
+prob13=""
+if [ -z "$advice" ]; then
+  prob13="$prob13 нет совета с git pull --rebase;"
+else
+  (cd "$WORK" && eval "$advice") > /dev/null 2>&1 || prob13="$prob13 совет не выполнился;"
+fi
+tag_commit="$(git -C "$ORIGIN" rev-parse --verify -q "v$NEXT^{commit}")"
+if [ -z "$tag_commit" ] || ! git -C "$ORIGIN" merge-base --is-ancestor "$tag_commit" master; then
+  prob13="$prob13 тег не на коммите из master;"
+elif [ "$(git -C "$ORIGIN" log -1 --format=%s "$tag_commit")" != "Выпуск версии $NEXT" ]; then
+  prob13="$prob13 тег не на коммите выпуска;"
+fi
+git -C "$ORIGIN" log --format=%s master | grep -Fx "Чужой коммит" > /dev/null || prob13="$prob13 чужой коммит потерян;"
+[ -z "$prob13" ] && ok "13. Push master отклонен: совет переставляет тег на коммит выпуска в master" \
+                 || bad "13. Отклоненный push master" "$prob13" "$out"
+
+# ── 14. Настоящий репозиторий не тронут ───────────────────────────────────────
 [ "$(git status --porcelain)" = "$STATUS_BEFORE" ] \
-  && ok "13. Прогон тестов не изменил рабочее дерево проекта" \
-  || bad "13. Прогон тестов изменил рабочее дерево проекта" "$(git status --short)"
+  && ok "14. Прогон тестов не изменил рабочее дерево проекта" \
+  || bad "14. Прогон тестов изменил рабочее дерево проекта" "$(git status --short)"
 
 # ── Итог ──────────────────────────────────────────────────────────────────────
 echo

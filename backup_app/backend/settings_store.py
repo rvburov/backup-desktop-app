@@ -19,11 +19,11 @@ from .ini import IniValue, read_ini, write_ini
 from .safety import DEFAULT_MAX_FILE_SIZE_GB
 from .scheduler import PERIOD_DAILY, PERIODS, Schedule, parse_time
 
-MAX_TABS = 500
 MAX_FILE_SIZE_GB_LIMIT = 1_000_000
 DEFAULT_BACKUP_TIME = "09:00"
 
 _UID = re.compile(r"[0-9A-Za-z_-]{1,64}")
+_TAB_KEY = re.compile(r"Tab_(0|[1-9][0-9]*)/")
 
 
 def new_tab_uid() -> str:
@@ -159,6 +159,17 @@ def _as_datetime(value: IniValue) -> Optional[datetime]:
         return None
 
 
+def _tab_count(values: Dict[str, IniValue]) -> int:
+    """Сколько вкладок читать: tab_count, но не больше, чем секций [Tab_N] в файле.
+
+    Своего предела у числа вкладок нет, поэтому записанная вкладка не теряется, сколько бы их ни было.
+    Испорченный tab_count (ноль, текст, миллион) не создает пустых вкладок: тогда читаются все секции.
+    Секции за пределами tab_count остаются от прежних версий и не читаются.
+    """
+    sections = 1 + max((int(match.group(1)) for match in map(_TAB_KEY.match, values) if match), default=-1)
+    return max(1, _as_int(values.get("tab_count"), sections, 1, sections))
+
+
 def _as_time_text(value: IniValue, default: str = DEFAULT_BACKUP_TIME) -> str:
     moment = parse_time(_as_text(value), None)
     return f"{moment.hour:02d}:{moment.minute:02d}" if moment else default
@@ -200,7 +211,7 @@ class SettingsStore:
         for key in GENERAL_BOOL_KEYS:
             setattr(config, key, _as_bool(values.get(key), getattr(config, key)))
 
-        count = _as_int(values.get("tab_count"), 1, 1, MAX_TABS)
+        count = _tab_count(values)
         config.active_tab = _as_int(values.get("active_tab"), 0, 0, count - 1)
         used: Set[str] = set()
         config.tabs = [self._load_tab(_TabValues(values, index), used) for index in range(count)]

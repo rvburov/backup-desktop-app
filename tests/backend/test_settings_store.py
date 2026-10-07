@@ -300,3 +300,27 @@ def test_save_removes_stale_tab_sections(tmp_path):
     text = open(store.path, encoding="utf-8").read()
     assert "[Tab_1]" not in text and "[Tab_2]" not in text
     assert store_at(tmp_path).load().tabs == [only]
+
+
+def test_more_than_500_tabs_survive_restart(tmp_path):
+    """Предела у числа вкладок нет. Раньше при 501 вкладке читалась одна, а сохранение стирало остальные."""
+    tabs = [TabConfig(title=f"Вкладка {index}") for index in range(501)]
+    store = store_at(tmp_path)
+    store.save(AppConfig(active_tab=500, tabs=tabs))
+    loaded = store_at(tmp_path).load()
+    assert loaded.tabs == tabs and loaded.active_tab == 500
+    store.save(loaded)
+    assert store_at(tmp_path).load().tabs == tabs
+
+
+def test_broken_tab_count_reads_tabs_present_in_file(tmp_path):
+    def titles(general):
+        text = f"[General]\n{general}\n[Tab_0]\ntab_title=A\n[Tab_1]\ntab_title=B\n[Tab_2]\ntab_title=C\n"
+        return [tab.title for tab in load_text(tmp_path, text).tabs]
+
+    assert titles("tab_count=1000000") == ["A", "B", "C"]
+    assert titles("tab_count=many") == ["A", "B", "C"]
+    assert titles("") == ["A", "B", "C"]
+    # секции за пределами tab_count остаются от прежних версий и не читаются
+    assert titles("tab_count=2") == ["A", "B"]
+    assert [tab.title for tab in load_text(tmp_path, "[General]\ntab_count=7\n").tabs] == ["Без названия"]

@@ -236,10 +236,14 @@ fi
 git tag -a "$TAG" -m "BackupApp $VERSION" || die "тег $TAG не создан"
 
 # Порядок важен: если push ветки отклонен (кто-то опередил), тег на GitHub не уедет,
-# и версию можно перевыпустить, ничего не разбирая на сервере.
+# и версию можно перевыпустить, ничего не разбирая на сервере. После git pull --rebase у коммита
+# выпуска новый хеш, поэтому тег переставляется: иначе он остался бы на коммите, которого нет
+# в master, и release.yml не стал бы собирать релиз.
 step "push origin $MAIN_BRANCH"
-git push --quiet origin "$MAIN_BRANCH" || die "push ветки отклонен. Тег $TAG создан локально; после
-    git pull --rebase повторите: git push origin $MAIN_BRANCH && git push origin $TAG"
+git push --quiet origin "$MAIN_BRANCH" || die "push ветки отклонен. Коммит выпуска и тег $TAG остались только у вас.
+    Если на GitHub в $MAIN_BRANCH появились новые коммиты, заберите их, переставьте тег на новый
+    коммит выпуска и отправьте все заново:
+    git pull --rebase origin $MAIN_BRANCH && git tag -f -a $TAG -m \"BackupApp $VERSION\" && git push origin $MAIN_BRANCH && git push origin $TAG"
 
 step "push origin $TAG"
 git push --quiet origin "$TAG" || die "push тега отклонен, отправьте вручную: git push origin $TAG"
