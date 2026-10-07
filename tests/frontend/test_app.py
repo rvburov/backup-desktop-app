@@ -1,3 +1,4 @@
+import ctypes
 import os
 from types import SimpleNamespace
 
@@ -60,4 +61,49 @@ def test_exe_and_other_systems_keep_default_taskbar_group(monkeypatch):
     monkeypatch.setattr(app_module.sys, "frozen", False)
     monkeypatch.setattr(app_module.sys, "platform", "linux")
     assert app_module.set_windows_app_id() is False
+    assert calls == []
+
+
+def fake_user32(calls, metric, icon):
+    def load_image(instance, path, kind, cx, cy, flags):
+        calls.append(("load", instance, path, kind, cx, cy, flags))
+        return icon
+
+    def send_message(hwnd, msg, wparam, lparam):
+        calls.append(("send", hwnd, msg, wparam, lparam))
+        return 0
+
+    user32 = SimpleNamespace(LoadImageW=load_image, SendMessageW=send_message, GetSystemMetrics=lambda index: metric)
+    return SimpleNamespace(WinDLL=lambda name: user32, c_void_p=ctypes.c_void_p, c_wchar_p=ctypes.c_wchar_p,
+                           c_uint=ctypes.c_uint, c_int=ctypes.c_int)
+
+
+def on_windows(monkeypatch, calls, metric=32, icon=777):
+    monkeypatch.setattr(app_module, "ctypes", fake_user32(calls, metric, icon))
+    monkeypatch.setattr(app_module.sys, "platform", "win32")
+    monkeypatch.setattr(app_module, "QGuiApplication", SimpleNamespace(platformName=lambda: "windows"))
+
+
+def test_taskbar_gets_icon_frame_of_its_own_size(monkeypatch):
+    # Панель задач рисует значок в 3/4 от SM_CXICON: 24 при масштабе 100 %, 30 при 125 %, 36 при 150 %.
+    window = SimpleNamespace(winId=lambda: 4242)
+    for metric, size in ((32, 24), (40, 30), (48, 36)):
+        calls = []
+        on_windows(monkeypatch, calls, metric)
+        assert app_module.set_taskbar_icon(window, "C:/app/icon.ico") is True
+        assert calls == [("load", None, "C:/app/icon.ico", 1, size, size, 0x10), ("send", 4242, 0x80, 1, 777)]
+
+
+def test_taskbar_icon_left_to_qt_without_windows_or_icon_file(monkeypatch):
+    window = SimpleNamespace(winId=lambda: 4242)
+    calls = []
+    on_windows(monkeypatch, calls, icon=None)
+    assert app_module.set_taskbar_icon(window, "C:/app/missing.ico") is False
+    assert [call[0] for call in calls] == ["load"]
+    calls.clear()
+    monkeypatch.setattr(app_module, "QGuiApplication", SimpleNamespace(platformName=lambda: "offscreen"))
+    assert app_module.set_taskbar_icon(window, "C:/app/icon.ico") is False
+    monkeypatch.setattr(app_module, "QGuiApplication", SimpleNamespace(platformName=lambda: "windows"))
+    monkeypatch.setattr(app_module.sys, "platform", "linux")
+    assert app_module.set_taskbar_icon(window, "C:/app/icon.ico") is False
     assert calls == []
