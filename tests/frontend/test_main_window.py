@@ -958,20 +958,24 @@ def test_first_start_and_reset_have_everything_off(env, tree):
         return ([settings.value(key) for key in ("auto_start", "minimize_to_tray", "show_notifications",
                                                  "run_missed")],
                 [option.checkbox.isChecked()
-                 for option in (page.contents_option, page.date_folder_option, page.date_name_option)],
+                 for option in (page.changed_option, page.contents_option, page.date_folder_option,
+                                page.date_name_option)],
                 page.schedule_switch.isChecked())
 
     window = env.window(show=True)
-    assert switches(window) == ([False] * 4, [False] * 3, False)
+    assert switches(window) == ([False] * 4, [False] * 4, False)
     fill_tab(window, [src / "docs"], [], dst)
     window.set_schedule(True)
-    for option in (window.page.contents_option, window.page.date_folder_option, window.page.date_name_option):
+    # «только новые и измененные» последним: после него «дата в имени» недоступна
+    for option in (window.page.contents_option, window.page.date_folder_option, window.page.date_name_option,
+                   window.page.changed_option):
         option.checkbox.click()
     for key in ("auto_start", "minimize_to_tray", "show_notifications", "run_missed"):
         window.settings_page.set_checked(key, True)
-    assert switches(window) == ([True] * 4, [True] * 3, True)
+    assert switches(window) == ([True] * 4, [True] * 4, True)
     window.perform_reset()
-    assert switches(window) == ([False] * 4, [False] * 3, False)
+    assert switches(window) == ([False] * 4, [False] * 4, False)
+    assert window.page.date_name_option.isEnabled()
 
 
 def test_reset_flow_asks_and_stays_on_settings(env):
@@ -985,6 +989,19 @@ def test_reset_flow_asks_and_stays_on_settings(env):
     window.settings_page.reset_button.click()
     assert len(window.tabs()) == 1 and window.current_view() == "settings"
     assert env.toasts[-1] == ("info", "Сброс завершен", "Все настройки успешно сброшены к значениям по умолчанию.")
+
+
+def test_only_changed_option_is_saved_and_turns_off_date_name(env):
+    window = env.window()
+    page = window.page
+    page.changed_option.checkbox.click()
+    assert env.stored().tabs[0].copy_only_changed is True
+    assert not page.date_name_option.isEnabled()
+    assert page.date_name_option.hint_label.text().startswith("не действует")
+    page.changed_option.checkbox.click()
+    assert env.stored().tabs[0].copy_only_changed is False
+    assert page.date_name_option.isEnabled()
+    assert page.date_name_option.hint_label.text() == "только при совпадении имен, иначе номер: файл_(1).txt"
 
 
 def test_tab_settings_are_saved_on_change(env):

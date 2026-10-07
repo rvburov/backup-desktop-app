@@ -38,11 +38,15 @@ MONTH_HINT = "В месяцах, где столько дней нет, — в �
 EMPTY_SOURCES = "Список пуст. Добавьте папки или файлы кнопками выше."
 NO_DESTINATION_HINT = "Без папки назначения вкладку нельзя скопировать."
 DESTINATION_PLACEHOLDER = "Папка назначения не выбрана"
+OPTION_ONLY_CHANGED = ("Копировать только новые и измененные файлы",
+                       "неизмененные пропускаются; прежняя копия измененного файла получает дату в имени")
 OPTION_CONTENTS = ("Копировать только содержимое папок, без самих папок",
                    "выбранные папки не создаются в месте назначения")
 OPTION_DATE_FOLDER = "Создавать отдельную папку с названием «Резервное копирование дд-мм-гггг» при каждом копировании"
 OPTION_DATE_NAME = ("Добавить дату к имени сохраненной копии файла",
                     "только при совпадении имен, иначе номер: файл_(1).txt")
+# подсказка «Добавить дату к имени», пока включено «только новые и измененные»: параметр не действует
+OPTION_DATE_NAME_OFF = "не действует при копировании только новых и измененных: прежняя копия всегда получает дату"
 PREVIEW_NO_DESTINATION = ("Сначала выберите папку назначения", "Существующие файлы никогда не перезаписываются.")
 
 
@@ -98,6 +102,8 @@ def preview_texts(tab: TabConfig, now: datetime, usable: Sequence[Tuple[str, str
     usable — доступные источники [(вид, путь)] в порядке копирования (сначала папки, затем файлы).
     Правила — как в copier: папка «Резервное копирование дд-мм-гггг» (backup_folder_name), имя папки
     в копии (folder_copy_name), при совпадении имя_дд.мм.гггг_чч-мм-сс или имя_(1) (safe_destination_path).
+    С «только новые и измененные» копия лежит по тем же путям, а прежняя копия измененного файла
+    получает в имени дату своего изменения.
     """
     if not tab.destination:
         return PREVIEW_NO_DESTINATION
@@ -115,6 +121,13 @@ def preview_texts(tab: TabConfig, now: datetime, usable: Sequence[Tuple[str, str
     elif kind == "file":
         file_name = _base_name(source)
     parts.append(file_name)
+    if tab.copy_only_changed:
+        stem, ext = os.path.splitext(file_name)
+        note = (f"Копируются только новые и измененные файлы. Если файл «{file_name}» изменился, прежняя копия "
+                f"получит имя {stem}_дд.мм.гггг_чч-мм-сс{ext} по дате своего изменения, а новая займет ее место")
+        if tab.create_backup_folder:
+            note += ". Папка с датой одна на день: в новый день все файлы копируются в новую папку заново."
+        return sep.join(parts), note
     clash = folder_copy_name(source) if whole_folder else file_name
     stem, ext = os.path.splitext(clash)
     renamed = f"{stem}_{now.strftime(COPY_STAMP_FORMAT)}{ext}" if tab.keep_history else f"{stem}_(1){ext}"
@@ -531,10 +544,11 @@ class TabPage(QWidget):
         title.setContentsMargins(W.OptionCheck.INSET, 0, 0, 0)
         lay.addWidget(title)
         lay.addSpacing(4)
+        self.changed_option = W.OptionCheck(*OPTION_ONLY_CHANGED)
         self.contents_option = W.OptionCheck(*OPTION_CONTENTS)
         self.date_folder_option = W.OptionCheck(OPTION_DATE_FOLDER, "")
         self.date_name_option = W.OptionCheck(*OPTION_DATE_NAME)
-        for option in (self.contents_option, self.date_folder_option, self.date_name_option):
+        for option in (self.changed_option, self.contents_option, self.date_folder_option, self.date_name_option):
             option.toggled.connect(self._on_option)
             lay.addWidget(option)
         lay.addStretch(1)
@@ -562,9 +576,11 @@ class TabPage(QWidget):
             self.time_edit.setTime(moment if moment.isValid() else QTime(9, 0))
             self.day_chips.set_value(max(0, min(6, tab.weekday)))
             self.monthday.set_value(max(1, min(31, tab.monthday)))
+            self.changed_option.setChecked(tab.copy_only_changed, silent=True)
             self.contents_option.setChecked(tab.copy_folder_contents, silent=True)
             self.date_folder_option.setChecked(tab.create_backup_folder, silent=True)
             self.date_name_option.setChecked(tab.keep_history, silent=True)
+            self._sync_date_name_option()
         finally:
             self._loading = False
         if switched:
@@ -714,10 +730,18 @@ class TabPage(QWidget):
     def _on_option(self, _on: bool) -> None:
         if self._loading:
             return
+        self.tab.copy_only_changed = self.changed_option.isChecked()
         self.tab.copy_folder_contents = self.contents_option.isChecked()
         self.tab.create_backup_folder = self.date_folder_option.isChecked()
         self.tab.keep_history = self.date_name_option.isChecked()
+        self._sync_date_name_option()
         self._emit_changed()
+
+    def _sync_date_name_option(self) -> None:
+        """«Добавить дату к имени» не действует, пока копируются только новые и измененные файлы."""
+        only_changed = self.changed_option.isChecked()
+        self.date_name_option.setEnabled(not only_changed)
+        self.date_name_option.set_hint(OPTION_DATE_NAME_OFF if only_changed else OPTION_DATE_NAME[1])
 
     def _check(self, method: str, path: str) -> Optional[str]:
         if self.validator is None:

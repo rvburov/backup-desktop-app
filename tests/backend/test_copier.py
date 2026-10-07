@@ -7,9 +7,9 @@ from types import SimpleNamespace
 import pytest
 
 from backup_app.backend import copier as copier_module
-from backup_app.backend.constants import BACKUP_FOLDER_PREFIX
+from backup_app.backend.constants import BACKUP_FOLDER_PREFIX, COPY_STAMP_FORMAT
 from backup_app.backend.copier import (STATUS_CANCELLED, STATUS_FAILED, STATUS_OK, STATUS_PARTIAL,
-                                       BackupJob, BackupOptions, BackupRunner, backup_folder_name,
+                                       BackupJob, BackupOptions, BackupRunner, ChangedOnlyPaths, backup_folder_name,
                                        describe_error, folder_copy_name, safe_destination_path)
 from backup_app.backend.safety import SafetyPolicy
 from helpers import list_rel, make_tree
@@ -277,3 +277,145 @@ def test_describe_error_gives_short_reasons():
     assert describe_error(OSError(errno.ENOSPC, "No space left on device")) == "на диске недостаточно места"
     assert describe_error(OSError(99999, "редкая ошибка")) == "редкая ошибка"
     assert describe_error(ValueError("сбой")) == "сбой"
+
+
+# --------------------------------------------------------------------------- только новые и измененные
+CHANGED = BackupOptions(copy_only_changed=True)
+ALL_COPIED = ["docs/a.txt", "docs/sub/b.txt", "single.txt"]
+
+
+def read(path):
+    with open(path, encoding="utf-8") as handle:
+        return handle.read()
+
+
+def write(path, text):
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text)
+
+
+def shift_mtime(path, seconds):
+    info = os.stat(path)
+    os.utime(path, (info.st_atime, info.st_mtime + seconds))
+
+
+def stamp_of(path):
+    """Дата, которую получит прежняя копия: время ее изменения."""
+    return datetime.fromtimestamp(os.stat(path).st_mtime).strftime(COPY_STAMP_FORMAT)
+
+
+def test_only_changed_second_run_copies_nothing(tree):
+    src, dst = tree
+    _lines, first = run([job_for(src, dst)], CHANGED)
+    assert first.status == STATUS_OK and first.message == "Успешно скопировано 3 файла"
+    assert list_rel(dst) == ALL_COPIED
+    _lines, second = run([job_for(src, dst)], CHANGED)
+    assert second.status == STATUS_OK and second.copied_count == 0 and second.unchanged_count == 3
+    assert second.message == "Новых и измененных файлов нет, без изменений: 3 файла"
+    assert second.total_bytes == 0
+    assert list_rel(dst) == ALL_COPIED  # ни docs_(1), ни single_(1): копия та же
+
+
+def test_only_changed_keeps_previous_copy_of_changed_file(tree):
+    src, dst = tree
+    run([job_for(src, dst)], CHANGED)
+    old_copy = os.path.join(dst, "docs", "a.txt")
+    stamp = stamp_of(old_copy)
+    source = os.path.join(src, "docs", "a.txt")
+    write(source, "AAA")
+    shift_mtime(source, 10)
+    write(os.path.join(src, "docs", "c.txt"), "C")
+    os.remove(os.path.join(src, "docs", "sub", "b.txt"))
+    _lines, result = run([job_for(src, dst)], CHANGED)
+    assert result.status == STATUS_OK and result.copied_count == 2 and result.unchanged_count == 1
+    assert result.message == "Успешно скопировано 2 файла, без изменений: 1 файл"
+    assert read(old_copy) == "AAA"
+    assert read(os.path.join(dst, "docs", f"a_{stamp}.txt")) == "A"  # прежняя копия с датой своего изменения
+    # файл, удаленный из источника, в копии остается
+    assert list_rel(dst) == sorted(ALL_COPIED + ["docs/c.txt", f"docs/a_{stamp}.txt"])
+
+
+def test_only_changed_ignores_two_second_time_difference(tree):
+    """FAT хранит время с шагом 2 секунды: такая разница — не изменение."""
+    src, dst = tree
+    run([job_for(src, dst)], CHANGED)
+    copy = os.path.join(dst, "single.txt")
+    shift_mtime(copy, 1.5)
+    _lines, result = run([job_for(src, dst)], CHANGED)
+    assert result.copied_count == 0 and result.unchanged_count == 3
+    shift_mtime(copy, 5)
+    _lines, result = run([job_for(src, dst)], CHANGED)
+    assert result.copied_count == 1 and result.unchanged_count == 2
+    assert len([name for name in os.listdir(dst) if name.startswith("single_")]) == 1
+
+
+def test_only_changed_numbers_same_names_the_same_way_every_run(tmp_path):
+    """Две папки «docs» и содержимое двух папок в одном месте: номера не меняются от запуска к запуску."""
+    make_tree(tmp_path / "one", {"docs": {"x.txt": "1"}})
+    make_tree(tmp_path / "two", {"docs": {"x.txt": "22"}})
+    folders = [str(tmp_path / "one" / "docs"), str(tmp_path / "two" / "docs")]
+    whole, merged = tmp_path / "whole", tmp_path / "merged"
+    for _ in range(2):
+        _lines, separate = run([BackupJob("a", folders, [], str(whole))], CHANGED)
+        _lines, together = run([BackupJob("b", folders, [], str(merged))],
+                               BackupOptions(copy_folder_contents=True, copy_only_changed=True))
+    assert list_rel(whole) == ["docs/x.txt", "docs_(1)/x.txt"]
+    assert list_rel(merged) == ["x.txt", "x_(1).txt"]
+    assert read(merged / "x_(1).txt") == "22"
+    assert separate.unchanged_count == 2 and together.unchanged_count == 2
+
+
+def test_only_changed_needs_space_for_changes_only(tree, monkeypatch):
+    src, dst = tree
+    run([job_for(src, dst)], CHANGED)
+    monkeypatch.setattr(copier_module, "free_space", lambda path: 0)
+    _lines, result = run([job_for(src, dst)], CHANGED)
+    assert result.status == STATUS_OK and result.unchanged_count == 3  # копировать нечего — место не нужно
+    write(os.path.join(src, "single.txt"), "SSSS")
+    _lines, result = run([job_for(src, dst)], CHANGED)
+    assert result.total_bytes == 4  # только измененный файл
+    assert any("Недостаточно свободного места" in error and "(нужно 0.0 MB)" in error for error in result.errors)
+
+
+def test_only_changed_with_daily_folder_compares_within_the_day(tree):
+    src, dst = tree
+    for _ in range(2):
+        _lines, result = run([job_for(src, dst)], BackupOptions(create_backup_folder=True, copy_only_changed=True))
+    day = daily_folder()
+    assert list_rel(dst) == [f"{day}/{name}" for name in ALL_COPIED]
+    assert result.unchanged_count == 3
+
+
+def test_only_changed_reports_folder_in_place_of_copy(tree):
+    src, dst = tree
+    os.makedirs(os.path.join(dst, "single.txt"))
+    _lines, result = run([job_for(src, dst)], CHANGED)
+    assert result.status == STATUS_PARTIAL and result.copied_count == 2
+    assert any("на месте копии уже есть папка" in error for error in result.errors)
+
+
+def test_previous_copy_gets_number_when_its_dated_name_is_taken(tree):
+    src, dst = tree
+    run([job_for(src, dst)], CHANGED)
+    stamp = stamp_of(os.path.join(dst, "single.txt"))
+    write(os.path.join(dst, f"single_{stamp}.txt"), "занято")
+    write(os.path.join(src, "single.txt"), "new")
+    _lines, result = run([job_for(src, dst)], CHANGED)
+    assert result.copied_count == 1 and read(os.path.join(dst, "single.txt")) == "new"
+    assert read(os.path.join(dst, f"single_{stamp}_(1).txt")) == "S"
+    assert read(os.path.join(dst, f"single_{stamp}.txt")) == "занято"
+
+
+def test_changed_only_paths_number_and_shorten(tmp_path):
+    root = str(tmp_path)
+    paths = ChangedOnlyPaths(root, 0, claim_folder_files=False)
+    assert paths.folder_base("docs") == os.path.join(root, "docs")
+    assert paths.folder_base("docs") == os.path.join(root, "docs_(1)")
+    # имена файлов из папок без слияния не запоминаются, явно выбранные файлы — запоминаются
+    assert paths.target(root, "x.txt", True) == paths.target(root, "x.txt", True) == (os.path.join(root, "x.txt"), False)
+    assert paths.target(root, "x.txt", False)[0] == os.path.join(root, "x.txt")
+    assert paths.target(root, "x.txt", False)[0] == os.path.join(root, "x_(1).txt")
+    # длинное имя укорачивается с запасом под дату прежней копии
+    limited = ChangedOnlyPaths(root, len(root) + 1 + 60, claim_folder_files=False)
+    target, shortened = limited.target(root, "д" * 80 + ".txt", True)
+    assert shortened and target.endswith(".txt") and len(os.path.basename(target)) == 60 - 26

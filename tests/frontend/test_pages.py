@@ -75,6 +75,18 @@ def test_preview_follows_copier_naming():
     # корень диска копируется в папку «Диск_C», как в copier
     path, _note = preview_texts(tab, NOW, [("folder", "C:/")])
     assert path == f"D:/Backup/Документы/{folder_copy_name('C:/')}/Отчет.docx"
+    # только новые и измененные: те же пути, прежняя копия измененного файла получает дату своего изменения
+    tab.copy_only_changed = True
+    path, note = preview_texts(tab, NOW, [("folder", "C:/Users/user/Documents")])
+    assert path == "D:/Backup/Документы/Documents/Отчет.docx"
+    assert note == ("Копируются только новые и измененные файлы. Если файл «Отчет.docx» изменился, прежняя "
+                    "копия получит имя Отчет_дд.мм.гггг_чч-мм-сс.docx по дате своего изменения, а новая займет "
+                    "ее место")
+    tab.create_backup_folder = True
+    path, note = preview_texts(tab, NOW, [("file", "C:/Users/user/Desktop/Пароли.kdbx")])
+    assert path == f"D:/Backup/Документы/{backup_folder_name(NOW)}/Пароли.kdbx"
+    assert "Пароли_дд.мм.гггг_чч-мм-сс.kdbx" in note
+    assert note.endswith("Папка с датой одна на день: в новый день все файлы копируются в новую папку заново.")
     assert preview_texts(TabConfig(), NOW, []) == ("Сначала выберите папку назначения",
                                                    "Существующие файлы никогда не перезаписываются.")
 

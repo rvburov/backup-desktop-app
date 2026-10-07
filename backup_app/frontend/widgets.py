@@ -587,7 +587,9 @@ class WrapAnywhereLabel(QFrame):
         painter = QPainter(self)
         self.drawFrame(painter)
         rect = self.contentsRect()
-        painter.setPen(self.palette().color(self.foregroundRole()))
+        # недоступная надпись (строка параметра, который сейчас не действует) — цветом группы Disabled
+        group = QPalette.Active if self.isEnabled() else QPalette.Disabled
+        painter.setPen(self.palette().color(group, self.foregroundRole()))
         self._layout(rect.width())[0].draw(painter, QPointF(rect.x(), rect.y()))
 
 

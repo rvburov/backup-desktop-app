@@ -367,6 +367,10 @@ QFrame[kind="toast"] QLabel {{ color: {C.WHITE}; }}
 QFrame[kind="dialog"] {{ background: {C.CARD}; border: none; border-radius: 10px; }}
 QWidget[kind="option"] {{ background: transparent; border-radius: 6px; }}
 QWidget[kind="option"]:hover {{ background: {C.OPT_HOVER}; }}
+/* параметр, который сейчас не действует: без подсветки, подпись и подсказка бледные (opacity .45) */
+QWidget[kind="option"]:disabled {{ background: transparent; }}
+QWidget[kind="option"] QWidget[kind="medium"]:disabled {{ color: {dis_text}; }}
+QWidget[kind="option"] QWidget[kind="muted"]:disabled {{ color: {faded(C.MUTED)}; }}
 
 /* ---------- кнопки ---------- */
 QPushButton, QToolButton {{ {med} {_fs(13)} color: {C.TEXT}; background: {C.CARD}; border: 1px solid {C.INPUT};

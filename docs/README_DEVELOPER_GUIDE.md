@@ -209,6 +209,7 @@ class TabConfig:
     copy_folder_contents: bool = False
     create_backup_folder: bool = False
     keep_history: bool = False
+    copy_only_changed: bool = False   # только новые и измененные файлы
     # служебные отметки, их ведет сервис
     timer_started_at: Optional[datetime] = None
     last_backup_time: Optional[datetime] = None
@@ -307,6 +308,17 @@ service.shutdown()
 `BackupJob.options`, а если их нет — из `BackupRunner.options` (`options_for(job)`). `BackupResult.status`
 принимает значения `ok`, `partial` (были ошибки), `cancelled`, `failed`. Пропуски по правилам безопасности
 лежат в `BackupResult.skipped` и ошибками не считаются.
+
+С `copy_only_changed` пути копий постоянные: их считает `ChangedOnlyPaths`, не глядя на то, что уже
+лежит в папке назначения, поэтому каждый запуск находит копии прошлого. Совпадения имен внутри одного
+копирования получают номер по порядку источников (`Документы_(1)`, `имя_(1).txt`), и номер тоже
+постоянный. Файл пропускается, если у копии тот же размер и время изменения отличается не больше чем на
+`SAME_TIME_TOLERANCE` (2 с, шаг FAT). Уже первый проход сверяет файлы с копией, поэтому объем, проверка
+свободного места и процент хода считаются только по новым и измененным файлам; неизмененные идут в
+`BackupResult.unchanged_count`. У измененного файла прежняя копия переименовывается
+(`_version_path()`: имя_дд.мм.гггг_чч-мм-сс по времени ее изменения, при занятом имени — с номером),
+и новая копия ложится на ее место. Если копировать нечего, статус `ok` и сообщение «Новых и
+измененных файлов нет, без изменений: N файлов».
 
 #### Schedule / next_run / previous_run
 
@@ -489,7 +501,7 @@ PyQt5 сохранял двоичным блоком `@Variant(...)`. Новые
 | `destination_folder` | `destination` |
 | `timer_active` | `schedule_on` |
 | `period_type`, `backup_time`, `weekday`, `monthday` | расписание вкладки |
-| `copy_folder_contents`, `create_backup_folder`, `keep_history` | параметры копирования вкладки |
+| `copy_folder_contents`, `create_backup_folder`, `keep_history`, `copy_only_changed` | параметры копирования вкладки |
 | `timer_started_at`, `last_backup_time` | служебные отметки (ISO 8601) |
 
 Значения проверяются при чтении: период из `PERIODS`, время «чч:мм», `weekday` 0..6, `monthday` 1..31,

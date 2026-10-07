@@ -48,6 +48,7 @@ class TabConfig:
     copy_folder_contents: bool = False
     create_backup_folder: bool = False
     keep_history: bool = False
+    copy_only_changed: bool = False
     # служебные отметки вкладки, их ведет сервис
     timer_started_at: Optional[datetime] = None
     last_backup_time: Optional[datetime] = None
@@ -70,7 +71,8 @@ class TabConfig:
     def options(self) -> BackupOptions:
         return BackupOptions(copy_folder_contents=self.copy_folder_contents,
                              keep_history=self.keep_history,
-                             create_backup_folder=self.create_backup_folder)
+                             create_backup_folder=self.create_backup_folder,
+                             copy_only_changed=self.copy_only_changed)
 
 
 @dataclass
@@ -105,7 +107,7 @@ EDITABLE_FIELDS = ("minimize_to_tray", "show_notifications", "run_missed", "max_
 SERVICE_TAB_FIELDS = ("schedule_on", "timer_started_at", "last_backup_time")
 
 GENERAL_BOOL_KEYS = ("auto_start", "minimize_to_tray", "show_notifications", "run_missed")
-TAB_BOOL_KEYS = ("copy_folder_contents", "create_backup_folder", "keep_history")
+TAB_BOOL_KEYS = ("copy_folder_contents", "create_backup_folder", "keep_history", "copy_only_changed")
 TAB_DATETIME_KEYS = ("timer_started_at", "last_backup_time")
 _TRUE = {"true", "1", "yes", "on"}
 _FALSE = {"false", "0", "no", "off", ""}

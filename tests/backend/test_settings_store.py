@@ -101,8 +101,10 @@ def test_tab_defaults_problems_schedule_and_options():
     assert tab.title == "Без названия" and tab.schedule_on is False
     assert tab.backup_time == "09:00" and tab.period_type == PERIOD_DAILY
     # у новой вкладки, при первом запуске и после сброса все выключено
-    assert tab.options() == BackupOptions(copy_folder_contents=False, keep_history=False, create_backup_folder=False)
+    assert tab.options() == BackupOptions(copy_folder_contents=False, keep_history=False, create_backup_folder=False,
+                                          copy_only_changed=False)
     assert tab.options() == BackupOptions()
+    assert TabConfig(copy_only_changed=True).options().copy_only_changed is True
     app = AppConfig()
     assert not (app.auto_start or app.minimize_to_tray or app.show_notifications or app.run_missed)
     assert tab.problems() == [NO_SOURCES, NO_DESTINATION]
@@ -129,7 +131,7 @@ def test_roundtrip_keeps_every_field(tmp_path):
                       folders=["C:/Исходные данные", "D:/Фото 2026"], files=["C:/Исходные данные/ф.txt"],
                       destination="D:/Копии", schedule_on=True, period_type=PERIOD_WEEKLY, backup_time="21:30",
                       weekday=4, monthday=15, copy_folder_contents=True, create_backup_folder=False,
-                      keep_history=False, timer_started_at=datetime(2026, 10, 1, 8, 0, 0),
+                      keep_history=False, copy_only_changed=True, timer_started_at=datetime(2026, 10, 1, 8, 0, 0),
                       last_backup_time=datetime(2026, 10, 6, 12, 0, 5)),
             TabConfig(uid="second-tab_2", title="Вторая", folders=["C:" + BS + "Папка, с запятой"],
                       files=["@файл"], destination="E:" + BS + "Копии", period_type=PERIOD_MONTHLY,
@@ -154,12 +156,14 @@ def test_new_file_layout(tmp_path):
                 "active_tab", "tab_count", "tab_names"):
         assert f"{key}=" in general
     for key in ("period_type", "backup_time", "weekday", "monthday", "copy_folder_contents", "copy_all_tabs",
-                "create_backup_folder", "keep_history", "timer_active", "timer_started_at", "last_backup_time"):
+                "create_backup_folder", "keep_history", "copy_only_changed", "timer_active", "timer_started_at",
+                "last_backup_time"):
         assert f"{key}=" not in general
     for key in ("tab_id", "tab_title", "source_folders", "source_files", "destination_folder", "timer_active",
                 "period_type", "backup_time", "weekday", "monthday", "copy_folder_contents",
-                "create_backup_folder", "keep_history", "timer_started_at", "last_backup_time"):
+                "create_backup_folder", "keep_history", "copy_only_changed", "timer_started_at", "last_backup_time"):
         assert f"{key}=" in tab
+    assert "copy_only_changed=false" in tab
     assert "tab_id=a1" in tab and "source_folders=C:/один" in tab and "source_files=@Invalid()" in tab
     assert "tab_names=A" in general
 

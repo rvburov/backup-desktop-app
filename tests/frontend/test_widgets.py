@@ -430,6 +430,27 @@ def test_switch_row_and_option_check(host):
     assert not opt.isChecked() and toggled == [True]
 
 
+def _darkest_text(label):
+    """Самый темный пиксель надписи (по непрозрачным пикселям снимка)."""
+    image = label.grab().toImage()
+    return min(QColor.fromRgba(image.pixel(x, y)).lightness()
+               for x in range(image.width()) for y in range(image.height())
+               if QColor.fromRgba(image.pixel(x, y)).alpha() == 255)
+
+
+def test_disabled_option_is_faded_and_ignores_clicks(host):
+    """Параметр, который сейчас не действует: подпись и подсказка бледные, щелчок не переключает."""
+    opt = show_in(host, W.OptionCheck("Добавить дату к имени", "только при совпадении имен"))
+    pump(host)
+    text, hint = _darkest_text(opt.text_label), _darkest_text(opt.hint_label)
+    opt.setEnabled(False)
+    pump(host)
+    assert _darkest_text(opt.text_label) > text and _darkest_text(opt.hint_label) > hint
+    QTest.mouseClick(opt.text_label, Qt.LeftButton)
+    pump(host)
+    assert not opt.isChecked()
+
+
 def test_rows_keep_text_together_when_taller(host):
     row = W.SwitchRow("Запускать вместе с Windows", "Программа запускается при входе в систему", title_kind="h3",
                       margins=(0, 0, 0, 0))
