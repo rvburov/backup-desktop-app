@@ -100,7 +100,11 @@ def test_tab_defaults_problems_schedule_and_options():
     assert len(tab.uid) == 12 and tab.uid != TabConfig().uid
     assert tab.title == "Без названия" and tab.schedule_on is False
     assert tab.backup_time == "09:00" and tab.period_type == PERIOD_DAILY
-    assert tab.options() == BackupOptions(copy_folder_contents=False, keep_history=True, create_backup_folder=True)
+    # у новой вкладки, при первом запуске и после сброса все выключено
+    assert tab.options() == BackupOptions(copy_folder_contents=False, keep_history=False, create_backup_folder=False)
+    assert tab.options() == BackupOptions()
+    app = AppConfig()
+    assert not (app.auto_start or app.minimize_to_tray or app.show_notifications or app.run_missed)
     assert tab.problems() == [NO_SOURCES, NO_DESTINATION]
     assert TabConfig(files=["a.txt"]).problems() == [NO_DESTINATION]
     assert TabConfig(destination="D:/x").problems() == [NO_SOURCES]
@@ -172,7 +176,7 @@ def test_legacy_ini_is_compatible(tmp_path):
     assert first.schedule_on is True and second.schedule_on is False
     assert all(tab.backup_time == "09:00" and tab.period_type == PERIOD_DAILY for tab in config.tabs)
     # новые ключи получают значения по умолчанию
-    assert config.minimize_to_tray and config.show_notifications and config.run_missed
+    assert not (config.minimize_to_tray or config.show_notifications or config.run_missed)
     assert config.max_file_size_gb == 2 and config.active_tab == 0
     assert first.last_backup_time is None
     assert len({tab.uid for tab in config.tabs}) == 2
@@ -253,6 +257,7 @@ def test_shipped_example_ini_loads(tmp_path):
     tab = config.tabs[0]
     assert tab.backup_time == "09:00" and tab.period_type == PERIOD_DAILY and tab.schedule_on is False
     assert tab.options() == BackupOptions() and tab.uid == "3f2a9c1d7e40"
+    assert without_uids(config) == without_uids(AppConfig())  # пример показывает значения по умолчанию
 
 
 def test_missing_paths_are_kept(tmp_path):
@@ -269,11 +274,11 @@ def test_invalid_values_fall_back_to_defaults(tmp_path):
         "[Tab_0]\nperiod_type=Bogus\nbackup_time=99:99\nweekday=12\nmonthday=0\n"
         "last_backup_time=yesterday\nkeep_history=maybe\ntimer_active=2\n"))
     assert len(config.tabs) == 1 and config.max_file_size_gb == 2 and config.active_tab == 0
-    assert config.run_missed is True
+    assert config.run_missed is AppConfig().run_missed is False
     tab = config.tabs[0]
     assert tab.period_type == PERIOD_DAILY and tab.backup_time == "09:00"
     assert tab.weekday == 0 and tab.monthday == 1 and tab.last_backup_time is None
-    assert tab.keep_history is True and tab.schedule_on is False
+    assert tab.keep_history is TabConfig().keep_history is False and tab.schedule_on is False
 
 
 def test_reset_restores_defaults(tmp_path):

@@ -13,7 +13,7 @@ from backup_app.backend import (NO_DESTINATION, NO_SOURCES, NO_TABS_WITH_DATA, P
                                 STATUS_OK, STATUS_PARTIAL, AppConfig, AppProblem, BackupFinished, BackupProgress,
                                 BackupResult, BackupService, BackupStarted, ConfigChanged, HistoryAdded, HistoryEntry,
                                 SettingsStore, setup_file_logging)
-from backup_app.backend import autostart, backup_folder_name
+from backup_app.backend import autostart
 from backup_app.backend import copier as copier_module
 from backup_app.backend.safety import system_paths
 from backup_app.frontend import constants as K
@@ -45,7 +45,12 @@ class FakeMessageBox:
 
 @pytest.fixture
 def env(qapp, config_dir, monkeypatch):
-    """Окно с настоящим сервисом. Диалоги, тосты и уведомления записываются в списки."""
+    """Окно с настоящим сервисом. Диалоги, тосты и уведомления записываются в списки.
+
+    Тема оформления применяется, как в настоящем приложении (QtFrontend): иначе размеры и вид элементов
+    зависели бы от того, успел ли ее применить какой-то из предыдущих тестов.
+    """
+    theme.apply(qapp)
     FakeMessageBox.calls = []
     notifications = []
     toasts = []
@@ -142,6 +147,11 @@ def ini_path(path):
     return str(path).replace("\\", "/")
 
 
+# По умолчанию все переключатели «Настроек» выключены: тесты уведомлений и трея включают нужное сами.
+NOTIFY_INI = "[General]\nshow_notifications=true\n"
+TRAY_INI = "[General]\nminimize_to_tray=true\nshow_notifications=true\n"
+
+
 def tabs_ini(*titles, active=0, extra=""):
     parts = [f"[General]\ntab_count={len(titles)}\nactive_tab={active}\n{extra}\n"]
     for index, title in enumerate(titles):
@@ -212,7 +222,7 @@ def test_active_tab_is_restored(env):
 # ------------------------------------------------------------ копирование
 def test_manual_backup_copies_and_logs(env, tree):
     src, dst = tree
-    window = env.window()
+    window = env.window(NOTIFY_INI)
     fill_tab(window, [src / "docs"], [src / "single.txt"], dst)
     window.page.run_button.click()
     assert window._running == (window.current_uid(),)
@@ -253,7 +263,7 @@ def test_partial_result_is_a_warning(env, tree, monkeypatch):
         return real(source, target)
 
     monkeypatch.setattr(copier_module.shutil, "copy2", failing)
-    window = env.window()
+    window = env.window(NOTIFY_INI)
     fill_tab(window, [src / "docs"], [src / "single.txt"], dst)
     window.manual_backup()
     assert wait_backup(env, window)
@@ -269,7 +279,7 @@ def test_cancel_backup(env, tree, monkeypatch):
     src, dst = tree
     make_tree(src / "docs", {f"f{i:02d}.txt": "x" for i in range(20)})
     slow_copy(monkeypatch)
-    window = env.window()
+    window = env.window(NOTIFY_INI)
     fill_tab(window, [src / "docs"], [], dst)
     window.manual_backup()
     wait_for(env.app, lambda: list_rel(dst), timeout=5)
@@ -306,15 +316,13 @@ def test_copy_all_tabs_runs_every_tab_with_data(env, tmp_path, monkeypatch):
     window.page.rename("Вторая")
     fill_tab(window, [second], [], dst)
     window.add_new_tab()  # пустая вкладка молча пропускается
-    started = datetime.now()
     window.sidebar.copy_all_button.click()
     assert env.asked()[-1] == (K.COPY_ALL_TITLE, K.COPY_ALL_TEXT.format(ready=2, total=3))
     assert window.status_bar.run_label.text() == K.PREPARING_TEXT
     assert wait_backup(env, window)
     assert "Ручное копирование: Первая, Вторая" in history_text(window)
-    # у каждой вкладки свои параметры по умолчанию: папка с датой, внутри — папки целиком
-    days = {backup_folder_name(started), backup_folder_name(datetime.now())}
-    assert any(list_rel(dst) == [f"{day}/one/a.txt", f"{day}/two/b.txt"] for day in days), list_rel(dst)
+    # у каждой вкладки свои параметры, по умолчанию все выключены: папки целиком прямо в папке назначения
+    assert list_rel(dst) == ["one/a.txt", "two/b.txt"]
     assert env.toasts == []
 
 
@@ -370,7 +378,7 @@ def test_schedule_switch_on_refused_and_off(env, tree):
 
 def test_scheduled_backup_runs_when_time_comes(env, tree):
     src, dst = tree
-    window = env.window()
+    window = env.window(NOTIFY_INI)
     fill_tab(window, [src / "docs"], [], dst)
     assert window.set_schedule(True)
     service = window.service
@@ -396,7 +404,7 @@ def test_scheduled_backup_runs_when_time_comes(env, tree):
 
 def test_scheduled_problems_never_open_dialogs(env, tree):
     src, dst = tree
-    window = env.window()
+    window = env.window(NOTIFY_INI)
     page = fill_tab(window, [src / "docs"], [], dst)
     window.set_schedule(True)
     page.clear_sources()
@@ -474,7 +482,7 @@ def test_resume_impossible_without_sources(env):
 def test_missed_run_is_executed_after_start(env, tree):
     src, dst = tree
     started = "2000-01-01T00:00:00"
-    window = env.window(resume_ini(src, dst, f"timer_started_at={started}"))
+    window = env.window(resume_ini(src, dst, f"timer_started_at={started}\nrun_missed=true"))
     assert "⚠ Пропущено плановое копирование" in history_text(window)
     assert window.service.tick() is True
     assert wait_backup(env, window)
@@ -484,10 +492,19 @@ def test_missed_run_is_executed_after_start(env, tree):
 
 
 # ------------------------------------------------------------ трей и выход
+def test_close_quits_while_background_mode_is_off(env, monkeypatch):
+    """Фоновый режим по умолчанию выключен: закрытие окна завершает программу."""
+    quits = []
+    monkeypatch.setattr(env.app, "quit", lambda: quits.append(True))
+    window = env.window(show=True)
+    window.close()
+    assert window._quitting and quits == [True]
+
+
 def test_close_hides_to_tray_instead_of_quitting(env, monkeypatch):
     quits = []
     monkeypatch.setattr(env.app, "quit", lambda: quits.append(True))
-    window = env.window()
+    window = env.window(TRAY_INI)
     window.show()
     window.close()
     assert window.isHidden() and not window._quitting
@@ -856,10 +873,13 @@ def test_sources_list_and_preview(env, tree):
     def preview():
         return page.preview_path.text().replace("\\", "/")
 
+    # по умолчанию без папки с датой: папка целиком прямо в папке назначения
+    assert preview().endswith("/docs/Отчет.docx") and "Резервное копирование " not in preview()
+    page.date_folder_option.checkbox.click()
     assert preview().endswith("/docs/Отчет.docx") and "Резервное копирование " in preview()
     page.contents_option.checkbox.click()
     assert preview().endswith(" " + datetime.now().strftime("%d-%m-%Y") + "/Отчет.docx")
-    assert env.stored().tabs[0].copy_folder_contents is True
+    assert env.stored().tabs[0].copy_folder_contents is True and env.stored().tabs[0].create_backup_folder is True
     page.remove_path(str(src / "docs"))
     assert page.summary_label.text() == "1 файл"
     assert preview().endswith("/single.txt")
@@ -912,7 +932,9 @@ def test_perform_reset(env, tree):
     fill_tab(window, [src / "docs"], [], dst)
     window.set_schedule(True)
     window.add_new_tab()
-    window.settings_page.set_checked("show_notifications", False)
+    window.page.date_folder_option.checkbox.click()
+    window.settings_page.set_checked("show_notifications", True)
+    window.settings_page.set_checked("minimize_to_tray", True)
     window.settings_page.max_size_spin.setValue(7)
     window.perform_reset()
     stored, default = env.stored(), AppConfig()
@@ -920,10 +942,36 @@ def test_perform_reset(env, tree):
     assert dataclasses.replace(stored, tabs=[]) == dataclasses.replace(default, tabs=[])
     assert len(stored.tabs) == 1
     assert dataclasses.replace(stored.tabs[0], uid="x") == dataclasses.replace(default.tabs[0], uid="x")
-    assert stored.tabs[0].keep_history and stored.tabs[0].create_backup_folder
+    tab = stored.tabs[0]
+    assert not (tab.keep_history or tab.create_backup_folder or tab.copy_folder_contents)
     assert len(window.tabs()) == 1 and not window.service.schedule_active
     assert not window.page.schedule_switch.isChecked()
     assert "Расписание остановлено: настройки сброшены" in history_text(window)
+
+
+def test_first_start_and_reset_have_everything_off(env, tree):
+    """При первом запуске и после сброса выключены все переключатели «Настроек» и все параметры вкладки."""
+    src, dst = tree
+
+    def switches(window):
+        settings, page = window.settings_page, window.page
+        return ([settings.value(key) for key in ("auto_start", "minimize_to_tray", "show_notifications",
+                                                 "run_missed")],
+                [option.checkbox.isChecked()
+                 for option in (page.contents_option, page.date_folder_option, page.date_name_option)],
+                page.schedule_switch.isChecked())
+
+    window = env.window(show=True)
+    assert switches(window) == ([False] * 4, [False] * 3, False)
+    fill_tab(window, [src / "docs"], [], dst)
+    window.set_schedule(True)
+    for option in (window.page.contents_option, window.page.date_folder_option, window.page.date_name_option):
+        option.checkbox.click()
+    for key in ("auto_start", "minimize_to_tray", "show_notifications", "run_missed"):
+        window.settings_page.set_checked(key, True)
+    assert switches(window) == ([True] * 4, [True] * 3, True)
+    window.perform_reset()
+    assert switches(window) == ([False] * 4, [False] * 3, False)
 
 
 def test_reset_flow_asks_and_stays_on_settings(env):
@@ -948,7 +996,7 @@ def test_tab_settings_are_saved_on_change(env):
     page.date_name_option.checkbox.click()
     stored = env.stored().tabs[0]
     assert stored.period_type == PERIOD_WEEKLY and stored.weekday == 4
-    assert stored.backup_time == "21:30" and stored.keep_history is False
+    assert stored.backup_time == "21:30" and stored.keep_history is True  # было выключено по умолчанию
     page.period.button(PERIOD_MONTHLY).click()
     for _ in range(30):
         page.monthday.up_button.click()

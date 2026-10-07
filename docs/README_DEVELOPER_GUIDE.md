@@ -205,10 +205,10 @@ class TabConfig:
     backup_time: str = "09:00"
     weekday: int = 0              # 0 = понедельник
     monthday: int = 1             # 1..31
-    # параметры копирования вкладки
+    # параметры копирования вкладки: у новой вкладки, при первом запуске и после сброса все выключены
     copy_folder_contents: bool = False
-    create_backup_folder: bool = True
-    keep_history: bool = True
+    create_backup_folder: bool = False
+    keep_history: bool = False
     # служебные отметки, их ведет сервис
     timer_started_at: Optional[datetime] = None
     last_backup_time: Optional[datetime] = None
@@ -221,9 +221,9 @@ class TabConfig:
 @dataclass
 class AppConfig:
     auto_start: bool = False              # меняет только сервис (set_autostart)
-    minimize_to_tray: bool = True
-    show_notifications: bool = True
-    run_missed: bool = True
+    minimize_to_tray: bool = False        # при первом запуске и после сброса все переключатели выключены
+    show_notifications: bool = False
+    run_missed: bool = False
     max_file_size_gb: int = 2             # DEFAULT_MAX_FILE_SIZE_GB, 0 — без ограничения
     active_tab: int = 0
     tabs: List[TabConfig]                 # по умолчанию одна пустая вкладка

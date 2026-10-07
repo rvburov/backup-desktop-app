@@ -53,7 +53,8 @@ def test_problem_line():
 
 
 def test_preview_follows_copier_naming():
-    tab = TabConfig(destination="D:/Backup/Документы", folders=["C:/Users/user/Documents"])
+    tab = TabConfig(destination="D:/Backup/Документы", folders=["C:/Users/user/Documents"],
+                    create_backup_folder=True, keep_history=True)
     path, note = preview_texts(tab, NOW, [("folder", "C:/Users/user/Documents")])
     assert path == f"D:/Backup/Документы/{backup_folder_name(NOW)}/Documents/Отчет.docx"
     assert backup_folder_name(NOW) == "Резервное копирование 06-10-2026"

@@ -40,9 +40,11 @@ WalkItem = Tuple[str, str, str, int]  # вид («dir» или «file»), пут
 
 @dataclass
 class BackupOptions:
+    """Параметры копирования; по умолчанию все выключены, как у новой вкладки."""
+
     copy_folder_contents: bool = False
-    keep_history: bool = True
-    create_backup_folder: bool = True
+    keep_history: bool = False
+    create_backup_folder: bool = False
 
 
 @dataclass

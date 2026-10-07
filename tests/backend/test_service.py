@@ -607,15 +607,17 @@ def defaults_without_uid(config):
 
 def test_reset_restores_defaults_and_stops_schedule(make_service, paths, photos):
     photo_tab, _dst = photos
-    config = ready_config(paths, photo_tab, run_missed=False, keep_history=False, copy_folder_contents=True)
-    config.minimize_to_tray = False
+    config = ready_config(paths, photo_tab, run_missed=True, keep_history=True, copy_folder_contents=True,
+                          create_backup_folder=True)
+    config.minimize_to_tray = config.show_notifications = True
     service, events, _clock = make_service(config)
     service.set_tab_schedule("data", True)
     service.set_tab_schedule("photo", True)
     reset = service.reset()
     assert defaults_without_uid(reset) == defaults_without_uid(AppConfig())
     tab = reset.tabs[0]
-    assert tab.keep_history and tab.create_backup_folder and not tab.copy_folder_contents
+    assert not (tab.keep_history or tab.create_backup_folder or tab.copy_folder_contents)
+    assert not (reset.auto_start or reset.minimize_to_tray or reset.show_notifications or reset.run_missed)
     assert not service.schedule_active and service.next_runs() == {}
     assert stored(service) == reset
     assert of_type(events, ConfigChanged)[-1].config == reset
