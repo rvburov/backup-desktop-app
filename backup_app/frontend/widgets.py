@@ -18,8 +18,8 @@ from PyQt5 import sip
 from PyQt5.QtWidgets import (QAbstractButton, QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QFrame,
                              QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QLayout, QLineEdit, QListView,
                              QProgressBar, QPushButton, QSizePolicy, QSpacerItem, QSplitter, QSplitterHandle, QStyle,
-                             QStyledItemDelegate, QStyleOptionButton, QStyleOptionFrame, QStylePainter, QVBoxLayout,
-                             QWidget, QWidgetItem)
+                             QStyledItemDelegate, QStyleOptionButton, QStyleOptionFrame, QStylePainter, QToolTip,
+                             QVBoxLayout, QWidget, QWidgetItem)
 
 from . import icons
 from .theme import (BUTTON_HEIGHT, BUTTON_HEIGHT_SMALL, C, exact, faded, font, font_exact, has_keyboard_focus,
@@ -1764,6 +1764,22 @@ class EdgeShadow(QWidget):
         p.drawRect(QRectF(-1, 0 if self.top else -1, 2, 1))
 
 
+def show_row_tooltip(event, view, rect, text: str) -> bool:
+    """Подсказка к строке списка из helpEvent делегата: стоит на месте, пока курсор в строке rect.
+
+    Qt 5.15 (QAbstractItemDelegate.helpEvent) передает QToolTip прямоугольник строки в экранных
+    координатах, а точку курсора сверяет с ним в координатах виджета. Прямоугольники не совпадают,
+    подсказка считается устаревшей при каждом движении мыши и переставляется за курсором: дрожит
+    и мигает. Здесь прямоугольник и точка — в координатах области просмотра, как и требует
+    QToolTip.showText: подсказка стоит, пока курсор в строке, меняет текст при переходе на другую
+    строку и прячется, когда курсор строки покинул. Пустой text прячет подсказку.
+    Возвращает True, если подсказка показана (ответ для helpEvent).
+    """
+    QToolTip.showText(event.globalPos(), text, view.viewport(), rect if text else QRect())
+    event.setAccepted(bool(text))
+    return bool(text)
+
+
 class TabDelegate(QStyledItemDelegate):
     """Рисует строку вкладки: статус (точка/⚠/спиннер), имя 13/600 и подпись 11.5px с «…»."""
 
@@ -1855,6 +1871,12 @@ class TabDelegate(QStyledItemDelegate):
         sub = elided(QFontMetrics(sub_font), index.data(ROLE_SUB) or "", tw)
         p.drawText(QRectF(tx, text_top + self.NAME_H, tw, self.SUB_H), Qt.AlignLeft | Qt.AlignVCenter, sub)
         p.restore()
+
+    def helpEvent(self, event, view, option, index):  # noqa: N802
+        if event.type() == QEvent.ToolTip:
+            text = (index.data(Qt.ToolTipRole) or "") if index.isValid() else ""
+            return show_row_tooltip(event, view, option.rect, text)
+        return super().helpEvent(event, view, option, index)
 
 
 class SidebarTabList(QListView):

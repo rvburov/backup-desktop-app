@@ -1,8 +1,9 @@
 """Оформление и готовые элементы интерфейса: собираются без экрана и ведут себя как в макете."""
 import math
+import time
 
 import pytest
-from PyQt5.QtCore import QPoint, Qt, QTimer, qInstallMessageHandler
+from PyQt5.QtCore import QEvent, QObject, QPoint, Qt, QTimer, qInstallMessageHandler
 from PyQt5.QtGui import QColor, QFont, QIcon
 from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication, QHBoxLayout, QLabel, QLineEdit, QMenu, QStackedWidget, QVBoxLayout, QWidget
@@ -540,6 +541,44 @@ def entries(n=3):
     return base
 
 
+
+class ToolTipCounter(QObject):
+    """Считает события QEvent.ToolTip у виджета: после них подсказка уже решила, где стоять."""
+
+    def __init__(self, widget):
+        super().__init__(widget)
+        self.count = 0
+        widget.installEventFilter(self)
+
+    def eventFilter(self, obj, event):  # noqa: N802
+        if event.type() == QEvent.ToolTip:
+            self.count += 1
+        return False
+
+
+def wait_until(condition, timeout=2000):
+    """Крутит цикл событий, пока condition не станет истинным; False, если не дождались за timeout мс."""
+    deadline = time.monotonic() + timeout / 1000
+    while not condition():
+        if time.monotonic() > deadline:
+            return False
+        QTest.qWait(20)
+    return True
+
+
+def visible_tooltip():
+    for w in QApplication.topLevelWidgets():
+        if w.objectName() == "qtooltip_label" and w.isVisible():
+            return w
+    return None
+
+
+def hover(viewport, counter, pos, timeout=2000):
+    """Подвести курсор и дождаться, когда Qt спросит у виджета подсказку для этой точки."""
+    before = counter.count
+    QTest.mouseMove(viewport, pos)
+    assert wait_until(lambda: counter.count > before, timeout)
+
 def test_sidebar_tab_list_selection_and_filter(host):
     tabs = W.SidebarTabList()
     show_in(host, tabs)
@@ -591,6 +630,35 @@ def test_sidebar_tab_list_selection_and_filter(host):
     assert not tabs._spin_timer.isActive()
     assert not tabs.update_entry(W.TabEntry("zz", "?"))
     tabs.grab()
+
+
+def test_sidebar_tooltip_stays_in_row(host):
+    """Подсказка строки стоит на месте, пока курсор в строке, меняется на соседней и прячется за списком.
+
+    Сам Qt 5.15 сверяет прямоугольник строки в экранных координатах с точкой в координатах виджета
+    и переставляет подсказку за курсором при каждом его движении: она дрожит и мигает.
+    """
+    tabs = W.SidebarTabList()
+    host.move(300, 300)  # не в начале экрана: там экранные и локальные координаты совпадают, и ошибка не видна
+    show_in(host, tabs, width=260)
+    tabs.setFixedHeight(300)
+    tabs.set_entries(entries())
+    pump(host)
+    vp = tabs.viewport()
+    counter = ToolTipCounter(vp)
+    row = tabs.visualRect(tabs.proxy.index(0, 0))
+    hover(vp, counter, QPoint(row.left() + 20, row.center().y()))  # ждет SH_ToolTip_WakeUpDelay (500 мс)
+    tip = visible_tooltip()
+    assert tip is not None and tip.text() == "Документы — Каждый день · 09:00"
+    pos = tip.pos()
+    for step in range(1, 6):
+        hover(vp, counter, QPoint(row.left() + 20 + 6 * step, row.center().y()))
+        assert visible_tooltip() is tip and tip.pos() == pos
+    second = tabs.visualRect(tabs.proxy.index(1, 0))
+    hover(vp, counter, QPoint(row.left() + 20, second.center().y()))
+    assert visible_tooltip() is not None and visible_tooltip().text() == "Фото — По воскресеньям · 22:00"
+    QTest.mouseMove(host, QPoint(host.width() // 2, tabs.geometry().bottom() + 20))
+    assert wait_until(lambda: visible_tooltip() is None)
 
 
 def test_sidebar_edge_shadows(host):

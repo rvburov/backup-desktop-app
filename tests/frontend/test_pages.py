@@ -263,3 +263,68 @@ def test_exact_font_width(themed):
     assert low < width < high
     assert theme.font_exact("regular", 13).pointSizeF() == theme.font("regular", 13).pointSizeF()
     assert os.path.isdir(theme.fonts_dir())
+def test_source_list_tooltip_stays_in_row(themed):
+    """Подсказка строки источника стоит на месте при движении курсора, над кнопкой — «Убрать из списка»."""
+    import time
+
+    from PyQt5.QtCore import QObject, QPoint
+    from PyQt5.QtTest import QTest
+    from PyQt5.QtWidgets import QApplication
+
+    from backup_app.frontend.tab_page import SourceList
+
+    class ToolTipCounter(QObject):
+        def __init__(self, widget):
+            super().__init__(widget)
+            self.count = 0
+            widget.installEventFilter(self)
+
+        def eventFilter(self, obj, event):  # noqa: N802
+            if event.type() == QEvent.ToolTip:
+                self.count += 1
+            return False
+
+    def visible_tooltip():
+        for w in QApplication.topLevelWidgets():
+            if w.objectName() == "qtooltip_label" and w.isVisible():
+                return w
+        return None
+
+    def wait_until(condition, timeout=2000):
+        deadline = time.monotonic() + timeout / 1000
+        while not condition():
+            if time.monotonic() > deadline:
+                return False
+            QTest.qWait(20)
+        return True
+
+    def hover(pos):
+        before = counter.count
+        QTest.mouseMove(vp, pos)
+        assert wait_until(lambda: counter.count > before)
+
+    host = QWidget()
+    host.setGeometry(300, 300, 420, 300)  # не в начале экрана, иначе ошибка координат Qt не видна
+    lst = SourceList(host)
+    lst.setGeometry(0, 0, 420, 200)
+    lst.set_sources([("folder", "C:/Pictures", ""), ("folder", "F:/Камера", PATH_UNAVAILABLE)])
+    host.show()
+    QTest.qWaitForWindowExposed(host)
+    try:
+        vp = lst.viewport()
+        counter = ToolTipCounter(vp)
+        row = lst.visualRect(lst.model_.index(1, 0))
+        hover(QPoint(row.left() + 30, row.center().y()))
+        tip = visible_tooltip()
+        assert tip is not None and tip.text() == f"F:/Камера\n{PATH_UNAVAILABLE}"
+        pos = tip.pos()
+        for step in range(1, 5):
+            hover(QPoint(row.left() + 30 + 6 * step, row.center().y()))
+            assert visible_tooltip() is tip and tip.pos() == pos
+        hover(lst.delegate.button_rect(row).center())
+        assert visible_tooltip() is not None and visible_tooltip().text() == "Убрать из списка"
+        QTest.mouseMove(host, QPoint(host.width() // 2, host.height() - 20))
+        assert wait_until(lambda: visible_tooltip() is None)
+    finally:
+        host.close()
+        host.deleteLater()

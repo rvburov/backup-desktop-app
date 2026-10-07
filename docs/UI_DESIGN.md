@@ -112,6 +112,7 @@
 | `FlexRow(parent, hgap, vgap, align)` | строка с переносом, как `display:flex; flex-wrap:wrap` макета: `add(widget, basis, grow, shrink, min_width)` — `flex: grow shrink basis` и `min-width` (по умолчанию basis — ширина по содержимому), `add_spacer(grow)` — растяжка (`margin-left:auto`). На ней держатся все строки, которые переносятся в узком окне (шапки карточек, колонки «Настройки вкладки», строка состояния, шапка истории) |
 | `EmptyNote(text)` | пустой список «Что копировать»: пунктирная рамка 1.5px `INPUT_BORDER`, скругление 8, рисуется вручную (QSS пунктир рисует точками) |
 | `elided(metrics, text, width)` | любое сокращение текста с «…»: убирает пробел перед многоточием, как браузер |
+| `show_row_tooltip(event, view, rect, text)` | подсказка к строке списка из `helpEvent` делегата: стоит на месте, пока курсор в строке, и прячется, когда он ее покинул (сам Qt 5.15 переставляет подсказку за курсором, и она дрожит) |
 | `half_leading(line_height, font_height)` | отступ строки над текстом при межстрочном 1.4: округляется вниз, как в Chromium, иначе мелкий текст встает на 1px ниже макета |
 | `FlowLayout`, `label()`, `hline()`, `vline()`, `IconLabel`, `CapsLabel`, `style_menu()` | мелкие помощники |
 

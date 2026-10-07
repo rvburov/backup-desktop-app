@@ -14,7 +14,7 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 from PyQt5.QtCore import QEvent, QRect, QRectF, QSize, Qt, QTime, pyqtSignal
 from PyQt5.QtGui import QColor, QFontMetrics, QPainter, QStandardItem, QStandardItemModel
 from PyQt5.QtWidgets import (QAbstractItemView, QAbstractSpinBox, QFileDialog, QFrame, QHBoxLayout, QLineEdit,
-                             QListView, QSizePolicy, QStyle, QStyledItemDelegate, QTimeEdit, QToolTip, QVBoxLayout,
+                             QListView, QSizePolicy, QStyle, QStyledItemDelegate, QTimeEdit, QVBoxLayout,
                              QWidget)
 
 from ..backend import (DEFAULT_TAB_TITLE, PATH_SYSTEM, PERIOD_DAILY, PERIOD_MONTHLY, PERIOD_WEEKLY,
@@ -216,15 +216,16 @@ class SourceDelegate(QStyledItemDelegate):
         return super().editorEvent(event, model, option, index)
 
     def helpEvent(self, event, view, option, index):  # noqa: N802
-        if event.type() == QEvent.ToolTip and index.isValid():
-            path = index.data(ROLE_PATH) or ""
-            problem = index.data(ROLE_PROBLEM) or ""
-            if self.button_rect(option.rect).contains(event.pos()):
-                text = "Убрать из списка"
-            else:
-                text = f"{path}\n{problem}" if problem else path
-            QToolTip.showText(event.globalPos(), text, view)
-            return True
+        if event.type() == QEvent.ToolTip:
+            text = ""
+            if index.isValid():
+                path = index.data(ROLE_PATH) or ""
+                problem = index.data(ROLE_PROBLEM) or ""
+                if self.button_rect(option.rect).contains(event.pos()):
+                    text = "Убрать из списка"
+                else:
+                    text = f"{path}\n{problem}" if problem else path
+            return W.show_row_tooltip(event, view, option.rect, text)
         return super().helpEvent(event, view, option, index)
 
 
