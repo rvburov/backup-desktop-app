@@ -22,7 +22,7 @@ from PyQt5.QtWidgets import (QAbstractButton, QAbstractItemView, QApplication, Q
                              QWidget, QWidgetItem)
 
 from . import icons
-from .theme import (C, CONTROL_HEIGHT, exact, faded, font, font_exact, has_keyboard_focus,
+from .theme import (BADGE_HEIGHT, C, CONTROL_HEIGHT, exact, faded, font, font_exact, has_keyboard_focus,
                     keyboard_focus_reason, mix, px_to_pt, set_props)
 
 DAY_SHORT = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
@@ -476,15 +476,19 @@ class ElidedLabel(QLabel):
 
 
 class Badge(ElidedLabel):
-    """«Таблетка»: kind="badge" (11.5px/500, «действуют только для …») или "pill" (12px, строка состояния)."""
+    """Плашка-выделение: «действуют только для …», «Следующее копирование: …».
 
-    def __init__(self, text: str = "", kind: str = "badge", max_width: Optional[int] = None, parent=None):
-        super().__init__(text, kind, parent)
+    Вид у всех плашек один: 12px/500, высота BADGE_HEIGHT, поля 9px, скругление 9, ширина не больше MAX_WIDTH;
+    длинный текст сокращается с «…».
+    """
+
+    MAX_WIDTH = 360
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(text, "badge", parent)
         self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
-        self.setMaximumWidth(max_width or (260 if kind == "badge" else 360))
-
-
-Pill = Badge
+        self.setFixedHeight(BADGE_HEIGHT)
+        self.setMaximumWidth(self.MAX_WIDTH)
 
 
 class WrapAnywhereLabel(QFrame):

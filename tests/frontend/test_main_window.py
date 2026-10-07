@@ -766,6 +766,21 @@ def test_all_checkboxes_have_one_size(env):
     assert set(sizes.values()) == {(15, 15)}, sizes
 
 
+def test_badges_share_one_style(env):
+    """Плашки «Следующее копирование: …» и «действуют только для …» одного вида: шрифт, высота, поля, ширина."""
+    window = env.window(show=True)
+    window.resize(1100, 760)
+    QCoreApplication.processEvents()
+    pill, scope = window.status_bar.pill, window.page.scope_badge
+    assert pill.property("kind") == scope.property("kind") == "badge"
+    assert pill.height() == scope.height() == theme.BADGE_HEIGHT
+    assert pill.font() == scope.font() and pill.maximumWidth() == scope.maximumWidth()
+    text = "Следующее копирование: остановлено"
+    pill.setText(text)
+    scope.setText(text)
+    assert pill.sizeHint() == scope.sizeHint()   # те же поля вокруг одинакового текста
+
+
 def test_reset_clears_tab_search(env):
     window = env.window(tabs_ini(*[f"Вкладка {i}" for i in range(8)]))
     window.sidebar.search.setText("zz")

@@ -79,7 +79,7 @@
 | `QPushButton[variant]` | нет (обычная), `primary`, `ghost`, `link` (синий текст слева), `danger`, `danger-solid`, `nav` (пункт боковой панели «Настройки»: вид не меняется ни при наведении, ни при нажатии, ни на открытой странице) |
 | `QPushButton[small="true"]`, `[iconOnly="true"]` | шрифт 12.5px и поля 9px при той же высоте / квадратная |
 | `[kbfocus="true"]` | ставит `theme.FocusTracker` сам: фокус пришел с клавиатуры (рамка фокуса). Вручную не задавайте |
-| `QLabel[kind]` | `h1`, `h2`, `h3`, `medium`, `semibold`, `muted`, `muted-sm`, `secondary`, `faint`, `caps`, `count`, `warn`, `danger`, `ok`, `status` (+`tone`), `mono`, `mono-body`, `mono-time`, `badge`, `pill`, `note`, `note-sm`, `empty` |
+| `QLabel[kind]` | `h1`, `h2`, `h3`, `medium`, `semibold`, `muted`, `muted-sm`, `secondary`, `faint`, `caps`, `count`, `warn`, `danger`, `ok`, `status` (+`tone`), `mono`, `mono-body`, `mono-time`, `badge`, `note`, `note-sm`, `empty` |
 | `QFrame[kind]` | `card`, `card-footer`, `divider`, `vdivider`, `side-divider`, `sidebar`, `panel` (белая полоса с линией сверху), `row` (строка списка с линией и подсветкой), `row-plain`, `notice`, `note`, `stepper` |
 | `QLineEdit` | `[readOnly="true"]` — серый фон, `[mono="true"]` — моноширинный 12px, `[small="true"]` — поиск: шрифт 12.5px |
 | `QCheckBox[kind="filter"]` | 12.5px `TEXT2` (фильтр истории); подпись — отдельная надпись, зазор 6px задает раскладка |
@@ -99,7 +99,7 @@
 | `MonthdayStepper(value)` | число месяца 1…31 по кругу; `changed(int)`; стрелки и +/− на кнопках — шаг |
 | `Card(title, icon_name, header_divider, header_margins, body_margins)` | любой раздел; `add_header_widget()`, `body_layout`, `add_footer()` |
 | `NoticeBanner(title, text)` | ошибка внутри карточки (отказ добавить папку); `closed` |
-| `Badge(text, "badge"/"pill")` | «действуют только для …», «Следующее копирование: …» |
+| `Badge(text)` | плашка-выделение: «действуют только для …», «Следующее копирование: …». Вид у всех один: 12px/500, высота `BADGE_HEIGHT` (20), поля 9px, скругление 9, ширина не больше 360 |
 | `ElidedLabel`, `WrapAnywhereLabel` | одна строка с «…» / перенос где угодно (пути, имена без пробелов) |
 | `Spinner`, `ProgressBar`, `IndeterminateBar` | идет копирование / ход / подготовка |
 | `GripSplitter(side, main)` | боковая панель 180…440 px (240 по умолчанию) и рабочая область от 380 px |

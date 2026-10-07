@@ -157,8 +157,7 @@ class StatusBar(QFrame):
         self.idle_box.setFixedHeight(1)
         row.add(self.idle_box, basis=260, grow=1, min_width=0)
 
-        self.pill = W.Badge("", "pill", max_width=360)
-        self.pill.setFixedHeight(20)
+        self.pill = W.Badge("")
         row.add(self.pill, min_width=0)
         self.history_button = W.Button("", "ghost", small=True, icon="list")
         row.add(self.history_button)

@@ -100,7 +100,7 @@ def test_stylesheet_parses_and_covers_variants(themed):
     for selector in ('[variant="primary"]', '[variant="ghost"]', '[variant="danger"]', '[variant="danger-solid"]',
                      '[small="true"]', '[iconOnly="true"]', ":disabled", "QLineEdit", "QAbstractSpinBox",
                      "QCheckBox", '[kind="card"]', '[kind="divider"]', '[kind="notice"]', '[kind="badge"]',
-                     '[kind="pill"]', '[kind="segmented"]', '[kind="seg"]', '[kind="chip"]', "QScrollBar",
+                     '[kind="segmented"]', '[kind="seg"]', '[kind="chip"]', "QScrollBar",
                      "QMenu", "QMessageBox"):
         assert selector in qss, selector
     assert C.ACCENT in qss and C.BORDER in qss

@@ -87,6 +87,8 @@ DISABLED_OPACITY = 0.45
 # и полями. Ниже бывают лишь части составных элементов: сегменты внутри переключателя периодов (28),
 # кнопки −/+ внутри поля числа месяца (30), крестики закрытия сообщений.
 CONTROL_HEIGHT = 32
+# Высота всех плашек-выделений (Badge): «действуют только для …», «Следующее копирование: …».
+BADGE_HEIGHT = 20
 RADIUS_CARD = 8
 RADIUS_FIELD = 6
 BASE_FONT_PX = 13
@@ -328,9 +330,8 @@ QWidget[kind="toast-title"] {{ {semi} {_fs(13)} color: {C.WHITE}; }}
 QWidget[kind="toast-text"] {{ {_fs(12.5)} color: {C.TOAST_TEXT}; }}
 QWidget[kind="dialog-title"] {{ {semi} {_fs(15)} color: {C.TEXT}; }}
 QWidget[kind="dialog-text"] {{ {_fs(13)} color: {C.TEXT2}; }}
-QLabel[kind="badge"] {{ {med} {_fs(11.5)} color: {C.ACCENT_SOFT_TEXT}; background: {C.ACCENT_SOFT};
-    border-radius: 9px; padding: 2px 8px; }}
-QLabel[kind="pill"] {{ {_fs(12)} color: {C.ACCENT_SOFT_TEXT}; background: {C.ACCENT_SOFT};
+/* все плашки-выделения одного вида (Badge) */
+QLabel[kind="badge"] {{ {med} {_fs(12)} color: {C.ACCENT_SOFT_TEXT}; background: {C.ACCENT_SOFT};
     border-radius: 9px; padding: 2px 9px; }}
 QLabel[kind="note"], QWidget[kind="note"] {{ {_fs(12.5)} color: {C.MUTED}; background: {C.NOTE_BG};
     border-radius: 6px; padding: 10px 12px; }}
