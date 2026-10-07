@@ -2,7 +2,7 @@
 import math
 
 import pytest
-from PyQt5.QtCore import QPoint, Qt, QTimer, qInstallMessageHandler
+from PyQt5.QtCore import QEvent, QObject, QPoint, Qt, QTimer, qInstallMessageHandler
 from PyQt5.QtGui import QColor, QFont, QIcon
 from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication, QHBoxLayout, QLabel, QLineEdit, QMenu, QStackedWidget, QVBoxLayout, QWidget
@@ -100,9 +100,10 @@ def test_stylesheet_parses_and_covers_variants(themed):
                      '[small="true"]', '[iconOnly="true"]', ":disabled", "QLineEdit", "QAbstractSpinBox",
                      "QCheckBox", '[kind="card"]', '[kind="divider"]', '[kind="notice"]', '[kind="badge"]',
                      '[kind="pill"]', '[kind="segmented"]', '[kind="seg"]', '[kind="chip"]', "QScrollBar",
-                     "QMenu", "QToolTip", "QMessageBox"):
+                     "QMenu", "QMessageBox"):
         assert selector in qss, selector
     assert C.ACCENT in qss and C.BORDER in qss
+    assert "QToolTip" not in qss  # всплывающих подсказок в программе нет
 
 
 def test_helpers_mix_and_props(themed):
@@ -167,7 +168,7 @@ def test_icon_engine_has_disabled_color(themed):
 def test_button_variants_sizes_and_elide(host):
     primary = W.Button("Копировать сейчас", "primary", icon="play")
     small = W.Button("Добавить папку", small=True, icon="folder-plus")
-    icon_only = W.Button(icon="trash", icon_only=True, tooltip="Удалить вкладку")
+    icon_only = W.Button(icon="trash", icon_only=True, accessible_name="Удалить вкладку")
     long = W.Button("Копировать все вкладки", icon="layers", elide=True)
     for b in (primary, small, icon_only, long):
         show_in(host, b)
@@ -178,16 +179,15 @@ def test_button_variants_sizes_and_elide(host):
     assert icon_only.accessibleName() == "Удалить вкладку"
     assert primary.property("variant") == "primary" and primary.icon_name() == "play"
     assert long.text() == "Копировать все вкладки" and long.is_elided()
-    assert long.toolTip() == "Копировать все вкладки"
+    assert long.toolTip() == "" and icon_only.toolTip() == ""  # всплывающих подсказок нет
     primary.set_variant("ghost")
     assert primary.variant() == "ghost" and primary.property("variant") == "ghost"
     primary.setEnabled(False)
     primary.grab()  # рисуется и в недоступном виде
-    # подсказка следует за текстом и без смены ширины
     long.setText("Все")
-    assert not long.is_elided() and long.toolTip() == ""
+    assert not long.is_elided()
     long.setText("Копировать все вкладки сразу")
-    assert long.is_elided() and long.toolTip() == "Копировать все вкладки сразу"
+    assert long.is_elided() and long.toolTip() == ""
 
 
 def _ink_columns(widget, color_test):
@@ -200,7 +200,7 @@ def test_button_elide_without_icon(host):
     plain = show_in(host, W.Button("Сбросить все настройки по умолчанию", variant="danger", elide=True))
     plain.setFixedWidth(140)
     pump(host)
-    assert plain.is_elided() and plain.toolTip() == plain.text()
+    assert plain.is_elided() and plain.toolTip() == ""
     assert plain._shown_text().endswith("…")
     # текст начинается у левого поля (12px), а не обрезан по краям, как у QPushButton без «…»
     red = _ink_columns(plain, lambda c: c.red() > 150 and c.green() < 90 and c.blue() < 90)
@@ -208,14 +208,42 @@ def test_button_elide_without_icon(host):
     assert border and min(border) >= 10
     plain.setFixedWidth(400)
     pump(host)
-    assert not plain.is_elided() and plain.toolTip() == ""
-    tip = show_in(host, W.Button("Очень длинная подпись кнопки", elide=True, tooltip="Подсказка"))
-    tip.setFixedWidth(80)
-    pump(host)
-    assert tip.toolTip() == "Очень длинная подпись кнопки"
-    tip.setFixedWidth(400)
-    pump(host)
-    assert tip.toolTip() == "Подсказка"  # своя подсказка возвращается, когда текст помещается
+    assert not plain.is_elided()
+
+
+class _EventCounter(QObject):
+    """Считает события одного типа во всем приложении и ничего не задерживает."""
+
+    def __init__(self, kind):
+        super().__init__()
+        self.kind, self.count = kind, 0
+
+    def eventFilter(self, obj, event):  # noqa: N802
+        if event.type() == self.kind:
+            self.count += 1
+        return False
+
+
+def test_tooltips_never_show(themed, host):
+    """Всплывающих подсказок нет нигде: даже заданная вручную подсказка не появляется при наведении."""
+    button = show_in(host, W.Button("Копировать все вкладки"))
+    button.setToolTip("Подсказка")
+    counter = _EventCounter(QEvent.ToolTip)
+    themed.installEventFilter(counter)  # установлен последним, поэтому видит событие раньше блокировщика
+    try:
+        host.activateWindow()
+        QTest.mouseMove(button, QPoint(2, 2))
+        QTest.mouseMove(button, button.rect().center())
+        for _ in range(150):  # Qt присылает событие подсказки через 700 мс покоя мыши
+            if counter.count:
+                break
+            QTest.qWait(20)
+        assert counter.count, "Qt не прислал событие подсказки: проверка ничего не доказывает"
+        QTest.qWait(100)
+        shown = [w for w in QApplication.topLevelWidgets() if w.objectName() == "qtooltip_label" and w.isVisible()]
+        assert shown == []
+    finally:
+        themed.removeEventFilter(counter)
 
 
 def test_toggle_switch(host):
@@ -265,7 +293,7 @@ def test_segmented_elides_in_narrow_column(host):
     pump(host)
     weekly = seg.button("weekly")
     assert weekly.width() < weekly.sizeHint().width()
-    assert weekly.is_elided() and weekly._shown_text().endswith("…") and weekly.toolTip() == "Еженедельно"
+    assert weekly.is_elided() and weekly._shown_text().endswith("…") and weekly.toolTip() == ""
     seg.grab()
     host.setFixedWidth(600)
     pump(host)
@@ -472,12 +500,9 @@ def test_elided_and_wrapping_labels(host):
     show_in(host, holder, width=200)
     pump(host)
     assert elided.text().startswith("Очень длинное") and elided.is_elided()
-    assert elided.elided_text().endswith("…") and elided.toolTip() == elided.text()
-    width = elided.width()
-    elided.setText("коротко")  # ширина та же — подсказка все равно обновляется
-    assert elided.width() == width and elided.toolTip() == ""
-    elided.setText("Еще одно очень длинное название вкладки, которое не помещается")
-    assert elided.toolTip() == elided.text()
+    assert elided.elided_text().endswith("…") and elided.toolTip() == ""
+    elided.setText("коротко")
+    assert not elided.is_elided()
     assert wrap.heightForWidth(120) > wrap.heightForWidth(1200)
     assert wrap.height() >= wrap.heightForWidth(wrap.width()) - 1
     assert badge.width() <= 260 and badge.is_elided()
@@ -517,7 +542,7 @@ def test_grip_splitter_clamps_and_resets(host):
     assert splitter.set_side_width(1000) == 440
     assert splitter.set_side_width(300) == 300
     handle = splitter.handle_widget()
-    assert isinstance(handle, W.GripHandle) and handle.toolTip() == W.SPLITTER_TIP
+    assert isinstance(handle, W.GripHandle) and handle.toolTip() == ""
     QTest.mouseDClick(handle, Qt.LeftButton)
     assert splitter.side_width() == 240
     handle.setFocus()
@@ -869,5 +894,5 @@ def test_status_line(host):
     pump()
     line.set_status("warn", "Не выбраны исходные файлы/папки и папка назначения")
     pump()
-    assert line.text_label.is_elided() and line.text_label.toolTip() == line.text()
+    assert line.text_label.is_elided() and line.text_label.toolTip() == ""
     assert line.text_label.palette().color(line.text_label.foregroundRole()).name().upper() == C.WARN

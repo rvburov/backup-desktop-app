@@ -106,8 +106,7 @@ class Sidebar(QFrame):
         foot.setSpacing(0)
         foot.addWidget(W.hline("side-divider"))
         foot.addSpacing(10)
-        self.copy_all_button = W.Button("Копировать все вкладки", icon="layers", elide=True,
-                                        tooltip="Копировать все вкладки", surface="side")
+        self.copy_all_button = W.Button("Копировать все вкладки", icon="layers", elide=True, surface="side")
         foot.addWidget(self.copy_all_button)
         foot.addSpacing(6)
         self.settings_button = W.Button("Настройки", "nav", icon="gear", icon_size=16, elide=True, checkable=True)

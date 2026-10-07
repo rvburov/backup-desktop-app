@@ -1,7 +1,8 @@
-"""Иконка в системном трее: меню, подсказка и уведомления (макет Tray.dc.html).
+"""Иконка в системном трее: меню и уведомления (макет Tray.dc.html).
 
 Меню: «Открыть окно», «Копировать все вкладки», ближайшее копирование (недоступный пункт), «Выход».
-Левый щелчок по значку открывает окно.
+Левый щелчок по значку открывает окно. Подсказки при наведении у значка нет: всплывающих подсказок
+в программе нет нигде, ближайшее копирование видно в меню.
 """
 from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtGui import QIcon
@@ -9,21 +10,8 @@ from PyQt5.QtWidgets import QMenu, QSystemTrayIcon
 
 from . import icons
 from . import widgets as W
-from .constants import APP_TITLE, NEXT_RUN_STOPPED
+from .constants import NEXT_RUN_STOPPED
 from .theme import C
-
-
-# Windows хранит подсказку значка в NOTIFYICONDATA.szTip: 128 знаков с завершающим нулем. Длиннее —
-# обрезается молча, поэтому имя вкладки в конце подсказки сокращаем сами, с «…».
-TOOLTIP_LIMIT = 127
-
-
-def tooltip_text(text: str) -> str:
-    """«Резервное копирование файлов\n<текст>», при необходимости обрезанное с «…» в конце."""
-    tip = f"{APP_TITLE}\n{text}"
-    if len(tip) > TOOLTIP_LIMIT:
-        tip = tip[:TOOLTIP_LIMIT - 1].rstrip() + "…"
-    return tip
 
 
 class TrayIcon(QSystemTrayIcon):
@@ -48,7 +36,6 @@ class TrayIcon(QSystemTrayIcon):
         self.quit_action.triggered.connect(self.quit_requested.emit)
 
         self.setContextMenu(self._menu)
-        self.setToolTip(tooltip_text(NEXT_RUN_STOPPED))
         self.activated.connect(self._on_activated)
 
     @staticmethod
@@ -67,9 +54,8 @@ class TrayIcon(QSystemTrayIcon):
             self.show_requested.emit()
 
     def set_next_backup(self, text: str) -> None:
-        """Ближайшее копирование: полный текст в меню, в подсказке — не длиннее TOOLTIP_LIMIT знаков."""
+        """Ближайшее копирование — недоступный пункт меню."""
         self.next_action.setText(text)
-        self.setToolTip(tooltip_text(text))
 
     def set_backup_enabled(self, enabled: bool) -> None:
         self.backup_action.setEnabled(enabled)

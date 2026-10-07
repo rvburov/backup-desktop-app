@@ -108,7 +108,7 @@ backup-desktop-app/
 │       ├── settings_page.py       # SettingsPage: страница «Настройки»
 │       ├── history_panel.py       # HistoryPanel: «История копирования» с фильтром по вкладке
 │       ├── main_window.py         # MainWindow: боковая панель, страницы, строка состояния, события, трей
-│       ├── tray.py                # TrayIcon: меню, подсказка, уведомления
+│       ├── tray.py                # TrayIcon: меню, уведомления
 │       ├── single_instance.py     # SingleInstance на QLocalServer/QLocalSocket
 │       ├── resources.py           # Пути к ресурсам (icon.ico, fonts/) с учетом PyInstaller
 │       └── constants.py           # Тексты окна, трея и уведомлений
@@ -160,7 +160,7 @@ backup-desktop-app/
 | `settings_page.py`  | `SettingsPage` — общие настройки: четыре переключателя, лимит размера, сброс   |
 | `history_panel.py`  | `HistoryPanel` — история копирования, фильтр «Только «Имя»», кнопка журнала    |
 | `main_window.py`    | `MainWindow` — боковая панель (`Sidebar`), разделитель, страницы, `StatusBar`, тост, подтверждения, события, трей |
-| `tray.py`           | `TrayIcon` — меню, подсказка, уведомления                                      |
+| `tray.py`           | `TrayIcon` — меню, уведомления                                                 |
 | `single_instance.py`| защита от второго экземпляра                                                   |
 | `resources.py`      | `resource_path()` — путь к файлам рядом с программой или внутри exe            |
 | `constants.py`      | тексты окна, трея и уведомлений                                                |

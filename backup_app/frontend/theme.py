@@ -243,7 +243,7 @@ def build_palette() -> QPalette:
         QPalette.Window: C.WIN, QPalette.WindowText: C.TEXT, QPalette.Base: C.CARD,
         QPalette.AlternateBase: C.ROW_HOVER, QPalette.Text: C.TEXT, QPalette.Button: C.CARD,
         QPalette.ButtonText: C.TEXT, QPalette.BrightText: C.WHITE, QPalette.Highlight: C.ACCENT,
-        QPalette.HighlightedText: C.WHITE, QPalette.ToolTipBase: C.TOAST_BG, QPalette.ToolTipText: C.WHITE,
+        QPalette.HighlightedText: C.WHITE,
         QPalette.Link: C.ACCENT, QPalette.LinkVisited: C.ACCENT_HOVER, QPalette.Light: C.WHITE,
         QPalette.Midlight: C.DIVIDER, QPalette.Mid: C.INPUT, QPalette.Dark: C.FAINT, QPalette.Shadow: C.TEXT2,
     }
@@ -500,9 +500,7 @@ QMenu::item:disabled {{ color: {C.FAINT}; background: transparent; }}
 QMenu::icon {{ padding-left: 10px; }}
 QMenu::separator {{ height: 1px; background: {C.DIVIDER}; margin: 4px 6px; }}
 
-/* ---------- подсказки и системные окна ---------- */
-QToolTip {{ {reg} {_fs(12)} color: {C.WHITE}; background: {C.TOAST_BG}; border: 1px solid {C.TOAST_BG};
-    padding: 4px 7px; }}
+/* ---------- системные окна ---------- */
 QMessageBox {{ background: {C.CARD}; }}
 QMessageBox QLabel {{ {_fs(13)} color: {C.TEXT2}; }}
 QMessageBox QLabel#qt_msgbox_label {{ {med} color: {C.TEXT}; }}
@@ -589,6 +587,30 @@ def keyboard_focus_reason(reason) -> bool:
     return focus_tracker().is_keyboard(reason)
 
 
+# --------------------------------------------------------------------------- без всплывающих подсказок
+class ToolTipBlocker(QObject):
+    """Всплывающих подсказок в программе нет нигде.
+
+    Фильтр событий приложения (ставит apply()): событие QEvent.ToolTip, с которого начинается любая
+    подсказка Qt, до виджетов не доходит. Подсказок нет ни у своих элементов, ни у готовых элементов Qt,
+    и setToolTip() ничего не покажет. У значка в трее подсказку рисует система, и TrayIcon ее не задает.
+    """
+
+    def eventFilter(self, obj, event):  # noqa: N802
+        return event.type() == QEvent.ToolTip
+
+
+_tooltip_blocker: Optional[ToolTipBlocker] = None
+
+
+def tooltip_blocker() -> ToolTipBlocker:
+    """Общий ToolTipBlocker приложения (создается при первом обращении)."""
+    global _tooltip_blocker
+    if _tooltip_blocker is None:
+        _tooltip_blocker = ToolTipBlocker()
+    return _tooltip_blocker
+
+
 # --------------------------------------------------------------------------- стиль Qt
 class AppStyle(QProxyStyle):
     """Fusion + флажок и стрелки счетчика как в макете (рисуются вектором, без файлов-картинок)."""
@@ -602,11 +624,6 @@ class AppStyle(QProxyStyle):
         if metric in (QStyle.PM_IndicatorWidth, QStyle.PM_IndicatorHeight):
             return self.INDICATOR
         return super().pixelMetric(metric, option, widget)
-
-    def styleHint(self, hint, option=None, widget=None, data=None):
-        if hint == QStyle.SH_ToolTip_WakeUpDelay:
-            return 500
-        return super().styleHint(hint, option, widget, data)
 
     def drawItemText(self, painter, rect, flags, palette, enabled, text, role=QPalette.NoRole):  # noqa: N802
         # надписи и кнопки с дробным размером из QSS (12.5px, 13.5px): Qt5 рисует их целым 13/14px, и текст
@@ -713,6 +730,7 @@ def apply(app: QApplication, fonts_folder: Optional[str] = None) -> bool:
     """Стиль, шрифты, палитра и QSS для всего приложения. Возвращает load_fonts()."""
     app.setStyle(AppStyle())
     app.installEventFilter(focus_tracker())  # повторная установка не дублирует фильтр
+    app.installEventFilter(tooltip_blocker())  # всплывающих подсказок нет нигде
     ok = load_fonts(fonts_folder)
     base = font("regular", BASE_FONT_PX)
     app.setFont(base)

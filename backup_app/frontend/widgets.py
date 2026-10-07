@@ -32,8 +32,6 @@ DAY_FULL = ("Понедельник", "Вторник", "Среда", "Четв�
 SIDE_MIN, SIDE_MAX, SIDE_DEFAULT = 180, 440, 240
 MAIN_MIN = 380
 
-SPLITTER_TIP = "Потяните, чтобы изменить ширину списка. Двойной щелчок — ширина по умолчанию"
-
 # Цвет иконки кнопки = цвет ее текста (currentColor в макете).
 _VARIANT_ICON = {
     None: C.TEXT, "default": C.TEXT, "primary": C.WHITE, "ghost": C.TEXT2, "link": C.ACCENT,
@@ -427,12 +425,11 @@ class FlexRow(QLayout):
 
 # =========================================================================== текст
 class ElidedLabel(QLabel):
-    """Однострочная надпись с «…», если не помещается (text-overflow: ellipsis). Полный текст — в подсказке."""
+    """Однострочная надпись с «…», если не помещается (text-overflow: ellipsis)."""
 
-    def __init__(self, text: str = "", kind: Optional[str] = None, parent=None, auto_tooltip: bool = True):
+    def __init__(self, text: str = "", kind: Optional[str] = None, parent=None):
         super().__init__(parent)
         self.setTextFormat(Qt.PlainText)
-        self._auto_tooltip = auto_tooltip
         if kind:
             self.setProperty("kind", kind)
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
@@ -442,13 +439,6 @@ class ElidedLabel(QLabel):
         super().setText(text)
         self.updateGeometry()
         self.update()
-        self._sync_tooltip()  # если ширина не изменится, resizeEvent не придет
-
-    def _sync_tooltip(self) -> None:
-        if self._auto_tooltip:
-            tip = self.text() if self.is_elided() else ""
-            if self.toolTip() != tip:
-                self.setToolTip(tip)
 
     def _metrics(self) -> QFontMetrics:
         # Qt5 округляет дробный размер шрифта (12.5px → 13px): ширина текста — как у дробного размера макета
@@ -475,15 +465,6 @@ class ElidedLabel(QLabel):
         hint = super().minimumSizeHint()
         margins = self.width() - self.contentsRect().width() if self.width() else 0
         return QSize(min(hint.width(), self._metrics().horizontalAdvance("…") + margins + 8), hint.height())
-
-    def resizeEvent(self, event):  # noqa: N802
-        super().resizeEvent(event)
-        self._sync_tooltip()
-
-    def changeEvent(self, event):  # noqa: N802
-        super().changeEvent(event)
-        if event.type() in (QEvent.FontChange, QEvent.StyleChange, QEvent.ContentsRectChange):
-            self._sync_tooltip()
 
     def paintEvent(self, event):  # noqa: N802
         painter = QPainter(self)
@@ -678,14 +659,13 @@ class Button(QPushButton):
 
     def __init__(self, text: str = "", variant: Optional[str] = None, small: bool = False,
                  icon: Optional[str] = None, icon_color: Optional[str] = None, icon_size: Optional[int] = None,
-                 icon_only: bool = False, tooltip: Optional[str] = None, elide: bool = False,
+                 icon_only: bool = False, accessible_name: Optional[str] = None, elide: bool = False,
                  checkable: bool = False, surface: str = "card", parent=None):
         super().__init__(text, parent)
         self._surface = surface
         if surface != "card":
             self.setProperty("surface", surface)
         self._elide = elide
-        self._base_tip = tooltip or ""
         self._icon_name, self._icon_color, self._icon_stroke = None, icon_color, None
         self._icon_size = icon_size or (15 if not icon_only else 16)
         self._variant = variant
@@ -700,9 +680,8 @@ class Button(QPushButton):
             self.setProperty("small", True)
         if icon_only:
             self.setProperty("iconOnly", True)
-        if tooltip:
-            self.setToolTip(tooltip)
-            self.setAccessibleName(tooltip)
+        if accessible_name:
+            self.setAccessibleName(accessible_name)  # имя для экранного диктора: у кнопки-иконки нет текста
         self._apply_size()
         if icon:
             self.set_icon(icon, icon_color)
@@ -757,14 +736,6 @@ class Button(QPushButton):
         super().setText(text)
         self.updateGeometry()
         self.update()
-        self._sync_tooltip()
-
-    def _sync_tooltip(self) -> None:
-        """elide=True: полный текст в подсказке, пока он обрезан (иначе — подсказка из конструктора)."""
-        if self._elide:
-            tip = self.text() if self.is_elided() else self._base_tip
-            if self.toolTip() != tip:
-                self.setToolTip(tip)
 
     # --- размеры: Qt ставит между иконкой и текстом 4px, у нас 6 (10 у nav)
     def sizeHint(self):  # noqa: N802
@@ -798,15 +769,6 @@ class Button(QPushButton):
         if not self.icon().isNull():
             width -= self.iconSize().width() + self.icon_gap()
         return elided(QFontMetrics(exact(self.font())), self.text(), max(10, width))
-
-    def resizeEvent(self, event):  # noqa: N802
-        super().resizeEvent(event)
-        self._sync_tooltip()
-
-    def changeEvent(self, event):  # noqa: N802
-        super().changeEvent(event)
-        if event.type() in (QEvent.FontChange, QEvent.StyleChange):
-            self._sync_tooltip()
 
     def paintEvent(self, event):  # noqa: N802
         if self._elide and self.icon().isNull() and not self._icon_only and self.text():
@@ -928,7 +890,7 @@ class Segmented(QFrame):
 
     options — [(ключ, подпись), ...]. Сигнал changed(str) — только от пользователя.
     Ширина сегмента — по тексту плюс равная доля свободного места (flex: 1 1 auto в макете);
-    в узкой колонке подписи сокращаются с «…» (полный текст — в подсказке).
+    в узкой колонке подписи сокращаются с «…».
     """
 
     changed = pyqtSignal(str)
@@ -1076,7 +1038,6 @@ class DayChips(QWidget):
             b.setFixedSize(34, 28)
             b.setFocusPolicy(Qt.TabFocus)
             b.setCursor(Qt.PointingHandCursor)
-            b.setToolTip(full_names[index])
             b.setAccessibleName(full_names[index])
             b.clicked.connect(lambda _=False, i=index: self._pick(i))
             self._group.addButton(b)
@@ -1126,9 +1087,9 @@ class MonthdayStepper(QFrame):
         lay.setContentsMargins(1, 1, 1, 1)
         lay.setSpacing(0)
         self.down_button = Button(variant="stepper", icon="minus", icon_only=True, small=True,
-                                  tooltip="Раньше на день", icon_size=13)
+                                  accessible_name="Раньше на день", icon_size=13)
         self.up_button = Button(variant="stepper", icon="plus", icon_only=True, small=True,
-                                tooltip="Позже на день", icon_size=13)
+                                accessible_name="Позже на день", icon_size=13)
         self.value_label = QLabel()
         self.value_label.setProperty("kind", "semibold")
         self.value_label.setAlignment(Qt.AlignCenter)
@@ -1380,7 +1341,7 @@ class NoticeBanner(QFrame):
         self.text_label = WrapAnywhereLabel()
         lay.addWidget(self.text_label, 1)
         self.close_button = Button(variant="notice-close", icon="x", icon_only=True, small=True,
-                                   tooltip="Скрыть сообщение", icon_size=12)
+                                   accessible_name="Скрыть сообщение", icon_size=12)
         self.close_button.setFixedSize(22, 22)
         self.close_button.set_icon("x", C.NOTICE_TEXT, 2.4)
         close_box = QVBoxLayout()
@@ -1597,7 +1558,6 @@ class GripHandle(QSplitterHandle):
         super().__init__(orientation, splitter)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.TabFocus)
-        self.setToolTip(SPLITTER_TIP)
         self.setAccessibleName("Ширина списка вкладок")
         self.setCursor(Qt.SplitHCursor)
         self.hovered = self.pressed = False
@@ -2142,7 +2102,7 @@ class Toast(QFrame):
         col.addWidget(self.text_label)
         lay.addLayout(col, 1)
         self.close_button = Button(variant="toast-close", icon="x", icon_only=True, small=True,
-                                   tooltip="Закрыть уведомление", icon_size=12)
+                                   accessible_name="Закрыть уведомление", icon_size=12)
         self.close_button.setFixedSize(24, 24)
         self.close_button.set_icon("x", C.TOAST_TEXT, 2.4)
         close_box = QVBoxLayout()
@@ -2512,7 +2472,6 @@ class TitleEdit(QWidget):
         self._before = text
         self.line_edit.setText(text)
         self.line_edit.setCursorPosition(0)
-        self.line_edit.setToolTip(text)
         self.line_edit.textEdited.connect(self._edited)
         self.line_edit.editingFinished.connect(self._finished)
         self.line_edit.installEventFilter(self)
@@ -2529,13 +2488,11 @@ class TitleEdit(QWidget):
             if not self.line_edit.hasFocus():
                 self.line_edit.setCursorPosition(0)
         self._before = text
-        self.line_edit.setToolTip(text)
         self._fit()
 
     setText = set_text
 
     def _edited(self, text: str) -> None:
-        self.line_edit.setToolTip(text)
         self._fit()
         self.text_edited.emit(text)
 
@@ -2548,7 +2505,6 @@ class TitleEdit(QWidget):
         elif not force and text == self._before:
             return  # уже сообщено (Enter, затем уход фокуса) или имя не менялось
         self._before = text
-        self.line_edit.setToolTip(text)
         self.editing_finished.emit(text)
 
     def chars(self) -> int:

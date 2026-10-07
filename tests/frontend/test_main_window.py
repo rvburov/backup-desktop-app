@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 
 import pytest
 from PyQt5.QtCore import QCoreApplication, QEvent, Qt, QTime
+from PyQt5.QtWidgets import QWidget
 
 from backup_app.backend import (NO_DESTINATION, NO_SOURCES, NO_TABS_WITH_DATA, PERIOD_MONTHLY, PERIOD_WEEKLY,
                                 STATUS_OK, STATUS_PARTIAL, AppConfig, AppProblem, BackupFinished, BackupProgress,
@@ -508,20 +509,20 @@ def test_show_from_tray_restores_window(env):
     assert not window.isHidden()
 
 
-def test_tray_menu_texts_tooltip_and_copy_all(env, tree):
+def test_tray_menu_texts_and_copy_all(env, tree):
     src, dst = tree
     window = env.window()
     tray = window.tray
     assert tray.menu_texts() == ["Открыть окно", "Копировать все вкладки", "",
                                  "Следующее копирование: остановлено", "", "Выход"]
     assert not tray.next_action.isEnabled()
-    assert tray.toolTip() == "Резервное копирование файлов\nСледующее копирование: остановлено"
+    assert tray.toolTip() == ""  # подсказки у значка нет: ближайшее копирование видно в меню
     window.page.rename("Документы")
     fill_tab(window, [src / "docs"], [], dst)
     window.set_schedule(True)
     text = f"Следующее копирование: {window.service.next_run:%d.%m.%Y %H:%M} · Документы"
     assert tray.next_action.text() == text
-    assert tray.toolTip() == f"Резервное копирование файлов\n{text}"
+    assert tray.toolTip() == ""
     tray.backup_action.trigger()
     assert window._running and not tray.backup_action.isEnabled()
     assert wait_backup(env, window)
@@ -636,23 +637,25 @@ def test_rename_updates_status_pill_and_tray(env, tmp_path):
     edit.textEdited.emit("Фото")          # пока печатается
     assert window.status_bar.pill.text().endswith(" · Фото")
     assert window.tray.next_action.text().endswith(" · Фото")
-    assert window.tray.toolTip().endswith(" · Фото")
     window.page.rename("Архив")            # Enter
     assert window.status_bar.pill.text().endswith(" · Архив")
     assert window.tray.next_action.text().endswith(" · Архив")
 
 
-def test_tray_tooltip_fits_windows_limit(env):
-    window = env.window()
-    name = "Очень длинное название вкладки " * 4
-    text = f"Следующее копирование: 07.10.2026 09:00 · {name}"
-    window.tray.set_next_backup(text)
-    tip = window.tray.toolTip()
-    assert len(tip) <= 127 and tip.endswith("…")
-    assert tip.startswith("Резервное копирование файлов\nСледующее копирование: 07.10.2026 09:00 · Очень")
-    assert window.tray.next_action.text() == text   # в меню — полностью
-    window.tray.set_next_backup("Следующее копирование: остановлено")
-    assert window.tray.toolTip() == "Резервное копирование файлов\nСледующее копирование: остановлено"
+def test_no_tooltips_anywhere(env, tree):
+    """Всплывающих подсказок нет ни у одного элемента окна и у значка в трее, даже в узком окне с «…»."""
+    src, dst = tree
+    window = env.window(show=True)
+    window.page.rename("Очень длинное название вкладки, которое не помещается в боковую панель")
+    fill_tab(window, [src / "docs"], [], dst)
+    window.set_schedule(True)
+    window.resize(560, 640)
+    QCoreApplication.processEvents()
+    window.sidebar.settings_button.click()
+    QCoreApplication.processEvents()
+    tips = [(type(w).__name__, w.toolTip()) for w in window.findChildren(QWidget) if w.toolTip()]
+    assert tips == []
+    assert window.tray.toolTip() == ""
 
 
 def test_reset_clears_tab_search(env):
