@@ -756,6 +756,7 @@ def test_focus_ring_only_from_keyboard(host):
 def test_title_edit(host):
     title = show_in(host, W.TitleEdit("Документы"))
     assert title.line_edit.height() == theme.CONTROL_HEIGHT
+    assert title.findChildren(W.IconLabel) == [] and "pencil" not in icons.NAMES  # значка карандаша нет
     host.layout().addWidget(QLineEdit())  # есть куда уйти фокусу
     QApplication.setActiveWindow(host)  # с активным окном уход фокуса тоже дает editingFinished
     pump()

@@ -2436,7 +2436,7 @@ class _TitleLineEdit(QLineEdit):
 
 
 class TitleEdit(QWidget):
-    """Название вкладки, редактируемое на месте: 18px/600, рамка только при наведении/фокусе, карандаш.
+    """Название вкладки, редактируемое на месте: 18px/600, рамка только при наведении/фокусе, без значков рядом.
 
     Ширина поля — по тексту (как size="len+2" в макете, 6…48 знаков). Сигналы: text_edited(str) — каждое
     изменение; editing_finished(str) — один раз по Enter, Esc или уходу фокуса, если имя изменилось
@@ -2457,16 +2457,14 @@ class TitleEdit(QWidget):
         self.empty_text = empty_text
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(4)
+        lay.setSpacing(0)
         self.line_edit = _TitleLineEdit()
         self.line_edit.setProperty("kind", "title")
         self.line_edit.setAccessibleName("Название вкладки")
         self.line_edit.setFixedHeight(CONTROL_HEIGHT)  # как у кнопок: название вровень с кнопками шапки
         if max_length:
             self.line_edit.setMaxLength(max_length)
-        self.pencil = IconLabel("pencil", C.FAINT, 15)
         lay.addWidget(self.line_edit)
-        lay.addWidget(self.pencil)
         lay.addStretch(1)
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self._before = text
